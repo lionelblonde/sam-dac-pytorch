@@ -196,7 +196,6 @@ class Spawner(object):
                 # Optimization
                 'actor_lr': float(np.random.choice([1e-4, 3e-4])),
                 'critic_lr': float(np.random.choice([1e-4, 3e-4])),
-                'lr_schedule': self.config['lr_schedule'],
                 'clip_norm': self.config['clip_norm'],
                 'wd_scale': float(np.random.choice([1e-4, 3e-4, 1e-3])),
 
@@ -291,7 +290,6 @@ class Spawner(object):
                 # Optimization
                 'actor_lr': float(self.config.get('actor_lr', 3e-4)),
                 'critic_lr': float(self.config.get('critic_lr', 3e-4)),
-                'lr_schedule': self.config['lr_schedule'],
                 'clip_norm': self.config['clip_norm'],
                 'wd_scale': float(self.config.get('wd_scale', 3e-4)),
 

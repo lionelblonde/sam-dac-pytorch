@@ -2,7 +2,6 @@ import time
 from copy import deepcopy
 import os
 from pathlib import Path
-from collections import defaultdict
 
 import wandb
 import numpy as np
@@ -224,13 +223,9 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     # create context manager that records the time taken by encapsulated ops
     timed = timed_cm_wrapper(logger, use=DEBUG)
 
-    # start clocks
-    num_iters = int(args.num_timesteps) // args.rollout_len
-    iters_so_far = 0
-    timesteps_so_far = 0
+    # start clock
     tstart = time.time()
 
-    d = defaultdict(list)  # only rank 0 worker will populate
     # set up model save directory
     ckpt_dir = Path(args.checkpoint_dir) / experiment_name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -238,7 +233,7 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     if rank == 0:
 
         # save the model as a dry run, to avoid bad surprises at the end
-        agent.save(ckpt_dir, f"{iters_so_far}_dryrun")
+        agent.save_to_path(ckpt_dir, xtra="dryrun")
         logger.info(f"dry run. saving model @:\n{ckpt_dir}")
 
         # group by everything except the seed, which is last, hence index -1
@@ -263,6 +258,11 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                 time.sleep(pause)
         logger.info("wandb co established!")
 
+    for glob in ['train', 'explore', 'eval']:  # wandb categories
+        # define a custom x-axis
+        wandb.define_metric(f"{glob}/step")
+        wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
+
     # create rollout generator for training the agent
     roll_gen = rollout(env, agent, args.rollout_len)
     # create episode generator for evaluating the agent
@@ -270,104 +270,82 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     # the eval_env is None for all nonzero ranked worker,
     # but only this worker will use its ep_gen (legibility)
 
-    while iters_so_far <= num_iters:
+    i = 0
 
-        if iters_so_far % 100 == 0 or DEBUG:
-            log_iter_info(logger, iters_so_far, num_iters, tstart)
+    while agent.timesteps_so_far <= args.num_timesteps:
+
+        if i % 100 == 0 or DEBUG:
+            log_iter_info(logger, i, args.num_timesteps // args.rollout_len, tstart)
 
         with timed("interacting"):
             roll_gen.__next__()  # no need to get the returned rollout, stored in buffer
+            agent.timesteps_so_far += args.rollout_len
 
         with timed('training'):
-            for training_step in range(args.training_steps_per_iter):
+            for _ in range(args.training_steps_per_iter):
 
                 if agent.param_noise is not None:
-                    if training_step % args.pn_adapt_frequency == 0:
+                    if agent.actr_updates_so_far % args.pn_adapt_frequency == 0:
                         # adapt parameter noise
                         agent.adapt_param_noise()
-                    if rank == 0 and iters_so_far % args.eval_frequency == 0:
-                        # store the action-space dist between perturbed and non-perturbed
-                        d['pn_dist'].append(agent.pn_dist)
-                        # store the new std resulting from the adaption
-                        d['pn_cur_std'].append(agent.param_noise.cur_std)
+                        if rank == 0:
+                            agent.send_to_dash(
+                                {'pn_dist': agent.pn_dist, 'pn_cur_std': agent.pn_cur_std},
+                                step_metric=agent.actr_update_so_far,
+                                glob='explore',
+                            )  # `pn_dist`: action-space dist between perturbed and non-perturbed
+                            # `pn_cur_std`: store the new std resulting from the adaption
 
                 for _ in range(agent.hps.g_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
+                    # determine if updating the actr
+                    update_actr = not bool(agent.crit_updates_so_far % args.actor_update_delay),
                     # update the actor and critic
-                    metrics, lrnows = agent.update_actor_critic(
+                    agent.update_actr_crit(
                         batch=batch,
-                        update_actor=not bool(iters_so_far % args.actor_update_delay),
-                        iters_so_far=iters_so_far,
-                    )
-                    if rank == 0 and iters_so_far % args.eval_frequency == 0:
-                        # log training stats
-                        d['actr_losses'].append(metrics['actr_loss'])
-                        d['crit_losses'].append(metrics['crit_loss'])
-                        if agent.hps.clipped_double:
-                            d['twin_losses'].append(metrics['twin_loss'])
-                        d['lrnow'] = [lrnows['actr']]  # choice here: actor lr
+                        update_actr=update_actr,
+                    )  # counters for actr and crit updates are incremented internally!
 
                 for _ in range(agent.hps.d_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # update the discriminator
-                    metrics = agent.update_discriminator(batch)
-                    if rank == 0 and iters_so_far % args.eval_frequency == 0:
-                        # log training stats
-                        d['disc_losses'].append(metrics['disc_loss'])
+                    agent.update_disc(batch)  # update counter incremented internally too
 
-        if rank == 0 and iters_so_far % args.eval_frequency == 0:
+            agent.iters_so_far += 1
+
+        i += 1
+
+        if rank == 0 and agent.actr_updates_so_far % args.eval_frequency == 0:
 
             with timed("evaluating"):
+
+                len_buff, env_ret_buff = [], []
+
                 for _ in range(args.eval_steps_per_iter):
-                    # sample an episode w/ non-perturbed actor w/o storing anything
+
+                    # sample an episode with non-perturbed actor
                     ep = ep_gen.__next__()
-                    # aggregate data collected during the evaluation to the buffers
-                    d['eval_len'].append(ep['ep_len'])
-                    d['eval_env_ret'].append(ep['ep_env_ret'])
+                    # none of it is collected in the replay buffer
 
-        # increment counters
-        iters_so_far += 1
-        timesteps_so_far += args.rollout_len
+                    len_buff.append(ep['ep_len'])
+                    env_ret_buff.append(ep['ep_env_ret'])
 
-        if rank == 0 and ((iters_so_far - 1) % args.eval_frequency == 0):
+                eval_metrics = {'ep_len': np.mean(len_buff), 'ep_env_ret': np.mean(env_ret_buff)}
 
-            # log stats in csv
-            logger.record_tabular('timestep', timesteps_so_far)
-            logger.record_tabular('eval_len', np.mean(d['eval_len']))
-            logger.record_tabular('eval_env_ret', np.mean(d['eval_env_ret']))
-            logger.info("dumping stats in .csv file")
-            logger.dump_tabular()
+                # log stats in csv
+                logger.record_tabular('timestep', agent.timesteps_so_far)
+                logger.record_tabular('ep_len', eval_metrics['ep_len'])
+                logger.record_tabular('ep_env_ret', eval_metrics['ep_env_ret'])
+                logger.info("dumping stats in .csv file")
+                logger.dump_tabular()
 
-            # log stats in dashboard
-            if agent.param_noise is not None:
-                wandb.log({
-                    'pn_dist': np.mean(d['pn_dist']),
-                    'pn_cur_std': np.mean(d['pn_cur_std']),
-                }, step=timesteps_so_far)
-            wandb.log({
-                'actr_loss': np.mean(d['actr_losses']),
-                'actr_lrnow': d['lrnow'][0],  # take elt of singleton
-                'crit_loss': np.mean(d['crit_losses']),
-            }, step=timesteps_so_far)
-            if agent.hps.clipped_double:
-                wandb.log({
-                    'twin_loss': np.mean(d['twin_losses']),
-                }, step=timesteps_so_far)
-            wandb.log({
-                'disc_loss': np.mean(d['disc_losses']),
-            }, step=timesteps_so_far)
-
-            wandb.log({
-                'eval_len': np.mean(d['eval_len']),
-                'eval_env_ret': np.mean(d['eval_env_ret']),
-            }, step=timesteps_so_far)
-
-            # clear the iter running stats
-            d.clear()
+                # log stats in dashboard
+                agent.send_to_dash(eval_metrics, step_metric=agent.timesteps_so_far, glob='eval')
 
     if rank == 0:
         # save once we are done
-        agent.save(ckpt_dir, iters_so_far)
+        agent.save_to_path(ckpt_dir, xtra="done")
         logger.info(f"we're done. saving model @:\n{ckpt_dir}\nbye.")
+

@@ -34,7 +34,6 @@ def argparser(description="DDPG Experiment"):
     # optimization
     parser.add_argument('--actor_lr', type=float, default=1e-4)
     parser.add_argument('--critic_lr', type=float, default=1e-4)
-    parser.add_argument('--lr_schedule', type=str, choices=['constant', 'linear'], default='constant')
     parser.add_argument('--clip_norm', type=float, default=1.)
     parser.add_argument('--wd_scale', help='weight decay scale', type=float, default=0.001)
 
