@@ -1,80 +1,60 @@
-from mpi4py import MPI
 import torch
-
-from helpers.distributed_util import mpi_moments
-
-COMM = MPI.COMM_WORLD
 
 
 class RunningMoments(object):
 
-    def __init__(self, shape, comm=COMM, *, use_mpi=False):
+    def __init__(self, shape: dict, device: torch.device):
         """Maintain running statistics across workers leveraging Chan's method"""
-        self.use_mpi = use_mpi
-        self.count = 1e-4  # haxx to avoid any division by zero
-        self.comm = comm
+        self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)
-        kwargs = {"shape": shape, "dtype": torch.float64}
+        kwargs = {"shape": shape, "dtype": torch.float64, "device": device}
         self.mean, self.std = torch.zeros(**kwargs), torch.ones(**kwargs)
+        self.device = device
 
     def update(self, x):
         """Update running statistics using the new batch's statistics"""
+        assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
+        self.update_moments(x.double().mean(dim=0), x.double().std(dim=0), x.size(0))
 
-        
-
-        if isinstance(x, torch.Tensor):
-            # Clone, change x type to double (float64) and detach
-            x = x.clone().detach().double().cpu().numpy()
-        else:
-            x = x.astype(np.float64)
-        # Compute the statistics of the batch
-        if self.use_mpi:
-            batch_mean, batch_std, batch_count = mpi_moments(x, axis=0, comm=self.comm)
-        else:
-            batch_mean = np.mean(x, axis=0)
-            batch_std = np.std(x, axis=0)
-            batch_count = x.shape[0]
-        # Update moments
-        self.update_moms(batch_mean, batch_std, batch_count)
-
-    def update_moms(self, batch_mean, batch_std, batch_count):
+    def update_moments(self,
+                       batch_mean: torch.Tensor,
+                       batch_std: torch.Tensor,
+                       batch_count: int):
         """ Implementation of Chan's method to compute and maintain mean and variance estimates
         https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
         """
+        # at this stage, all tensors are on the same device (batch and self stats)
         delta = batch_mean - self.mean
         tot_count = self.count + batch_count
-        # Compute new mean
+        # compute new mean
         new_mean = self.mean + delta * batch_count / tot_count
-        m_a = np.square(self.std) * self.count
-        m_b = np.square(batch_std) * batch_count
-        m_2 = m_a + m_b + np.square(delta) * self.count * batch_count / tot_count
-        # Compute new var
+        m_a = torch.square(self.std) * self.count
+        m_b = torch.square(batch_std) * batch_count
+        m_2 = m_a + m_b + torch.square(delta) * self.count * batch_count / tot_count
+        # compute new var
         new_var = m_2 / tot_count
-        # Compute new count
+        # compute new count
         new_count = tot_count
-        # Update moments
+        # update moments
         self.mean = new_mean
-        self.std = np.sqrt(np.maximum(new_var, 1e-2))
+        min_var = torch.Tensor(1e-2).double()
+        self.std = torch.maximum(new_var, min_var).sqrt()
+        assert self.mean.device == self.device and self.std.device == self.device, "device issue"
         self.count = new_count
 
-    def standardize(self, x):
-        assert isinstance(x, torch.Tensor)
-        mean = torch.Tensor(self.mean).to(x)
-        std = torch.Tensor(self.std).to(x)
-        return (x - mean) / std
+    def standardize(self, x: torch.Tensor):
+        assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
+        return (x - self.mean) / self.std
 
-    def destandardize(self, x):
-        assert isinstance(x, torch.Tensor)
-        mean = torch.Tensor(self.mean).to(x)
-        std = torch.Tensor(self.std).to(x)
-        return (x * std) + mean
+    def destandardize(self, x: torch.Tensor):
+        assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
+        return (x * self.std) + self.mean
 
-    def divide_by_std(self, x):
-        assert isinstance(x, torch.Tensor)
-        std = torch.Tensor(self.std).to(x)
-        return x / std
+    def divide_by_std(self, x: torch.Tensor):
+        assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
+        return x / self.std
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: dict):
         self.__dict__.update(state_dict)
 
     def state_dict(self):
