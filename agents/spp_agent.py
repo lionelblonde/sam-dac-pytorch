@@ -1,5 +1,6 @@
-import os
 from pathlib import Path
+from typing import Optional
+from argparse import Namespace
 
 import wandb
 import numpy as np
@@ -11,27 +12,26 @@ from torch import autograd
 
 from helpers import logger
 from helpers.console_util import log_module_info
-from helpers.dataset import Dataset
+from helpers.dataset import Dataset, DemoDataset
 from helpers.math_util import huber_quant_reg_loss
 from helpers.distributed_util import average_gradients, sync_with_root, RunMoms
 from agents.nets import Actor, Critic, Discriminator
 from agents.param_noise import AdaptiveParamNoise
 from agents.ac_noise import NormalActionNoise, OUActionNoise
-
-
-debug_lvl = os.environ.get('DEBUG_LVL', 0)
-try:
-    debug_lvl = np.clip(int(debug_lvl), a_min=0, a_max=3)
-except ValueError:
-    debug_lvl = 0
-DEBUG = bool(debug_lvl >= 2)
+from agents.memory import ReplayBuffer
 
 
 class SPPAgent(object):
 
-    def __init__(self, shapes, max_ac, device, hps, expert_dataset, replay_buffer):
+    def __init__(self,
+                 shapes: dict,
+                 max_ac: float,
+                 device: torch.device,
+                 hps: Namespace,
+                 expert_dataset: Optional[DemoDataset],
+                 replay_buffer: Optional[ReplayBuffer]):
 
-        self.ob_shape, self.ac_shape = shapes['ob_shape'], shapes['ac_shape']
+        self.ob_shape, self.ac_shape = shapes["ob_shape"], shapes["ac_shape"]
         self.max_ac = max_ac
 
         self.device = device
@@ -112,7 +112,7 @@ class SPPAgent(object):
         self.targ_crit.load_state_dict(self.crit.state_dict())
 
         if self.hps.clipped_double:
-            # Create second ('twin') critic and target critic
+            # Create second ("twin") critic and target critic
             # TD3, https://arxiv.org/abs/1802.09477
             self.twin = Critic(self.env, self.hps, self.rms_obs).to(self.device)
             sync_with_root(self.twin)
@@ -125,10 +125,10 @@ class SPPAgent(object):
 
 
         if self.param_noise is not None:
-            # Create parameter-noise-perturbed ('pnp') actor
+            # Create parameter-noise-perturbed ("pnp") actor
             self.pnp_actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
             self.pnp_actr.load_state_dict(self.actr.state_dict())
-            # Create adaptive-parameter-noise-perturbed ('apnp') actor
+            # Create adaptive-parameter-noise-perturbed ("apnp") actor
             self.apnp_actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
             self.apnp_actr.load_state_dict(self.actr.state_dict())
 
@@ -167,66 +167,65 @@ class SPPAgent(object):
 
 
 
-        log_module_info(logger, 'actr', self.actr)
-        log_module_info(logger, 'crit', self.crit)
+        log_module_info(logger, "actr", self.actr)
+        log_module_info(logger, "crit", self.crit)
         if self.hps.clipped_double:
-            log_module_info(logger, 'twin', self.crit)
-        log_module_info(logger, 'disc', self.disc)
+            log_module_info(logger, "twin", self.crit)
+        log_module_info(logger, "disc", self.disc)
 
     def norm_rets(self, x):
         """Standardize if return normalization is used, do nothing otherwise"""
         if self.hps.ret_norm:
             return self.rms_ret.standardize(x)
-        else:
-            return x
+        return x
 
     def denorm_rets(self, x):
         """Standardize if return denormalization is used, do nothing otherwise"""
         if self.hps.ret_norm:
             return self.rms_ret.destandardize(x)
-        else:
-            return x
+        return x
 
     def parse_noise_type(self, noise_type):
         """Parse the `noise_type` hyperparameter"""
         param_noise, ac_noise = None, None
         logger.info("parsing noise type")
         # parse the comma-seprated (with possible whitespaces) list of noise params
-        for cur_noise_type in noise_type.split(','):
-            cur_noise_type = cur_noise_type.strip()  # remove all whitespaces (start and end)
-            # if the specified noise type is literally 'none'
-            if cur_noise_type == 'none':
+        for cur_noise_type in noise_type.split(","):
+            cnt = cur_noise_type.strip()  # remove all whitespaces (start and end)
+            # if the specified noise type is literally "none"
+            if cnt == "none":
                 pass
-            # if 'adaptive-param' is in the specified string for noise type
-            elif 'adaptive-param' in cur_noise_type:
+            # if "adaptive-param" is in the specified string for noise type
+            elif "adaptive-param" in cnt:
                 # set parameter noise
-                _, std = cur_noise_type.split('_')
+                _, std = cnt.split("_")
                 param_noise = AdaptiveParamNoise(initial_std=float(std), delta=float(std))
                 logger.info(f"{param_noise} configured")
-            elif 'normal' in cur_noise_type:
-                _, std = cur_noise_type.split('_')
+            elif "normal" in cnt:
+                _, std = cnt.split("_")
                 # spherical (isotropic) gaussian action noise
                 mu = torch.zeros(self.ac_shape[0]).to(self.device)
                 sigma = float(std) * torch.ones(self.ac_shape[0]).to(self.device)
                 ac_noise = NormalActionNoise(mu=mu, sigma=sigma)
                 logger.info(f"{ac_noise} configured")
-            elif 'ou' in cur_noise_type:
-                _, std = cur_noise_type.split('_')
+            elif "ou" in cnt:
+                _, std = cnt.split("_")
                 # Ornstein-Uhlenbeck action noise
                 mu = torch.zeros(self.ac_shape[0]).to(self.device)
                 sigma = float(std) * torch.ones(self.ac_shape[0]).to(self.device)
                 ac_noise = OUActionNoise(mu=mu, sigma=sigma)
                 logger.info(f"{ac_noise} configured")
             else:
-                raise RuntimeError(f"unknown noise type: '{cur_noise_type}'")
+                raise RuntimeError(f"unknown noise type: {cnt}")
         return param_noise, ac_noise
 
     def store_transition(self, transition):
         """Store the transition in memory and update running moments"""
+        assert self.replay_buffer is not None
         # Store transition in the replay buffer
         self.replay_buffer.append(transition)
         # Update the observation normalizer
-        _state = transition['obs0']
+        _state = transition["obs0"]
         if self.hps.wrap_absorb:
             if np.all(np.equal(_state, np.append(np.zeros_like(_state[0:-1]), 1.))):
                 # if this is a "flag" state (wrap absorbing): not used to update rms_obs
@@ -236,6 +235,7 @@ class SPPAgent(object):
 
     def sample_batch(self):
         """Sample a batch of transitions from the replay buffer"""
+        assert self.replay_buffer is not None
 
         # create patcher if needed
         def _patcher(x, y, z):
@@ -257,7 +257,7 @@ class SPPAgent(object):
         return batch
 
     def predict(self, ob, apply_noise):
-        # predict an action, with or without perturbation
+        """Predict an action, with or without perturbation"""
 
         # create tensor from the state (`require_grad=False` by default)
         ob = torch.Tensor(ob[None]).to(self.device)
@@ -274,8 +274,7 @@ class SPPAgent(object):
             # in combination with parameter noise, or not.
             noise = self.ac_noise.generate()
             ac += noise
-        ac = ac.clip(-self.max_ac, self.max_ac)
-        return ac
+        return ac.clip(-self.max_ac, self.max_ac)
 
     def remove_absorbing(self, x):
         non_absorbing_rows = []
@@ -283,12 +282,12 @@ class SPPAgent(object):
             if torch.all(torch.eq(row, torch.cat([torch.zeros_like(row[0:-1]),
                                                   torch.Tensor([1.]).to(self.device)], dim=-1))):
                 logger.info(f"removing absorbing row (#{j})")
-                pass
             else:
                 non_absorbing_rows.append(j)
         return x[non_absorbing_rows, :], non_absorbing_rows
 
     def compute_losses(self, state, action, next_state, next_action, reward, done, td_len):
+        """Compute the critic and actor losses"""
 
         twin_loss = None
 
@@ -356,7 +355,7 @@ class SPPAgent(object):
             # the resulting shape is [batch_size, num_tau_prime, num_tau, 1]
 
             # sum over current quantile value (tau, N in paper) dimension, and
-            # average over target quantile value (tau prime, N' in paper) dimension.
+            # average over target quantile value (tau prime, N" in paper) dimension.
             crit_loss = huber_td_errors.sum(dim=2)
             # resulting shape is [batch_size, num_tau_prime, 1]
             crit_loss = crit_loss.mean(dim=1)
@@ -417,11 +416,12 @@ class SPPAgent(object):
         return actr_loss, crit_loss, twin_loss
 
     def send_to_dash(self, metrics, *, step_metric, glob):
+        """Send the metrics to the wandb dashboard"""
         wandb_dict = {
-            f"{glob}/{k}": v.item() if hasattr(v, 'item') else v
+            f"{glob}/{k}": v.item() if hasattr(v, "item") else v
             for k, v in metrics.items()
         }
-        if glob == 'train':
+        if glob == "train":
             wandb_dict[f"{glob}/lr"] = self.actr_sched.get_last_lr()[0]  # current lr
 
         wandb_dict[f"{glob}/step"] = step_metric
@@ -430,20 +430,21 @@ class SPPAgent(object):
         logger.info(f"logged this to wandb: {wandb_dict}")
 
     def update_actr_crit(self, batch, update_actr):
+        """Update the critic and the actor"""
 
         # transfer to device
         if self.hps.wrap_absorb:
-            state = torch.Tensor(batch['obs0_orig']).to(self.device)
-            action = torch.Tensor(batch['acs_orig']).to(self.device)
-            next_state = torch.Tensor(batch['obs1_orig']).to(self.device)
+            state = torch.Tensor(batch["obs0_orig"]).to(self.device)
+            action = torch.Tensor(batch["acs_orig"]).to(self.device)
+            next_state = torch.Tensor(batch["obs1_orig"]).to(self.device)
         else:
-            state = torch.Tensor(batch['obs0']).to(self.device)
-            action = torch.Tensor(batch['acs']).to(self.device)
-            next_state = torch.Tensor(batch['obs1']).to(self.device)
-        reward = torch.Tensor(batch['rews']).to(self.device)
-        done = torch.Tensor(batch['dones1'].astype('float32')).to(self.device)
+            state = torch.Tensor(batch["obs0"]).to(self.device)
+            action = torch.Tensor(batch["acs"]).to(self.device)
+            next_state = torch.Tensor(batch["obs1"]).to(self.device)
+        reward = torch.Tensor(batch["rews"]).to(self.device)
+        done = torch.Tensor(batch["dones1"].astype("float32")).to(self.device)
         if self.hps.n_step_returns:
-            td_len = torch.Tensor(batch['td_len']).to(self.device)
+            td_len = torch.Tensor(batch["td_len"]).to(self.device)
         else:
             td_len = torch.ones_like(done).to(self.device)
 
@@ -457,7 +458,7 @@ class SPPAgent(object):
 
         # compute critic and actor losses
         actr_loss, crit_loss, twin_loss = self.compute_losses(
-            state, action, next_state, next_action, reward, done, td_len
+            state, action, next_state, next_action, reward, done, td_len,
         )
 
         # update critic
@@ -467,9 +468,9 @@ class SPPAgent(object):
         self.crit_opt.zero_grad()
 
         self.send_to_dash(
-            {'crit_loss': crit_loss},
+            {"crit_loss": crit_loss},
             step_metric=self.crit_updates_so_far,
-            glob='train',
+            glob="train",
         )
 
         if twin_loss is not None:
@@ -480,9 +481,9 @@ class SPPAgent(object):
             self.twin_opt.zero_grad()
 
             self.send_to_dash(
-                {'crit_loss': crit_loss},
+                {"crit_loss": crit_loss},
                 step_metric=self.crit_updates_so_far,  # as many updates as critic
-                glob='train',
+                glob="train",
             )
 
         self.crit_updates_so_far += 1
@@ -498,9 +499,9 @@ class SPPAgent(object):
             self.actr_opt.zero_grad()
 
             self.send_to_dash(
-                {'actr_loss': actr_loss},
+                {"actr_loss": actr_loss},
                 step_metric=self.crit_updates_so_far,
-                glob='train',
+                glob="train",
             )
 
             self.actr_updates_so_far += 1
@@ -518,14 +519,14 @@ class SPPAgent(object):
         p_e_loss, entropy_loss, grad_pen = None, None, None
 
         # create DataLoader object to iterate over transitions in rollouts
-        d_keys = ['obs0']
+        d_keys = ["obs0"]
         if self.hps.state_only:
             if self.hps.n_step_returns:
-                d_keys.append('obs1_td1')
+                d_keys.append("obs1_td1")
             else:
-                d_keys.append('obs1')
+                d_keys.append("obs1")
         else:
-            d_keys.append('acs')
+            d_keys.append("acs")
 
         d_dataset = Dataset({k: batch[k] for k in d_keys})
         d_dataloader = DataLoader(
@@ -541,17 +542,17 @@ class SPPAgent(object):
             d_batch = next(iter(d_dataloader))
 
             # transfer to device
-            p_input_a = d_batch['obs0'].to(self.device)
-            e_input_a = e_batch['obs0'].to(self.device)
+            p_input_a = d_batch["obs0"].to(self.device)
+            e_input_a = e_batch["obs0"].to(self.device)
             if self.hps.state_only:
                 if self.hps.n_step_returns:
-                    p_input_b = d_batch['obs1_td1'].to(self.device)
+                    p_input_b = d_batch["obs1_td1"].to(self.device)
                 else:
-                    p_input_b = d_batch['obs1'].to(self.device)
-                e_input_b = e_batch['obs1'].to(self.device)
+                    p_input_b = d_batch["obs1"].to(self.device)
+                e_input_b = e_batch["obs1"].to(self.device)
             else:
-                p_input_b = d_batch['acs'].to(self.device)
-                e_input_b = e_batch['acs'].to(self.device)
+                p_input_b = d_batch["acs"].to(self.device)
+                e_input_b = e_batch["acs"].to(self.device)
 
             # compute scores
             p_scores = self.disc(p_input_a, p_input_b)
@@ -601,13 +602,14 @@ class SPPAgent(object):
             self.disc_updates_so_far += 1
 
         # populate metrics with the latest values
-        metrics.update({'entropy_loss': entropy_loss, 'p_e_loss': p_e_loss})
+        metrics.update({"entropy_loss": entropy_loss, "p_e_loss": p_e_loss})
         if self.hps.grad_pen:
-            metrics.update({'grad_pen': grad_pen})
-        self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob='train')
+            metrics.update({"grad_pen": grad_pen})
+        self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob="train")
         del metrics
 
     def grad_pen(self, p_input_a, p_input_b, e_input_a, e_input_b):
+        """Compute the gradient penalty"""
 
         # assemble interpolated inputs
         eps_a = torch.rand(p_input_a.size(0), 1).to(self.device)
@@ -630,7 +632,8 @@ class SPPAgent(object):
             create_graph=True,
             allow_unused=False,
         )
-        assert len(list(grads)) == 2, "length must be exactly 2"
+        des_len = 2
+        assert len(list(grads)) == des_len, "length must be exactly 2"
 
         # return the gradient penalty
         grads = torch.cat(list(grads), dim=-1)
@@ -640,26 +643,20 @@ class SPPAgent(object):
             # penalize the gradient for having a norm GREATER than k
             grad_pen = torch.max(
                 torch.zeros_like(grads_norm),
-                grads_norm - self.hps.grad_pen_targ
+                grads_norm - self.hps.grad_pen_targ,
             ).pow(2)
         else:
             # penalize the gradient for having a norm LOWER OR GREATER than k
             grad_pen = (grads_norm - self.hps.grad_pen_targ).pow(2)
 
-        # average over batch
-        grad_pen = grad_pen.mean()
-
-        return grad_pen
+        return grad_pen.mean()  # average over batch
 
     def get_syn_rew(self, state, action, next_state):
 
         # define the discriminator inputs
         input_a = state
-        if self.hps.state_only:
-            input_b = next_state
-        else:
-            input_b = action
-        assert sum([isinstance(x, torch.Tensor) for x in [input_a, input_b]]) in [0, 2]
+        input_b = next_state if self.hps.state_only else action
+        assert sum([isinstance(x, torch.Tensor) for x in [input_a, input_b]]) in {0, 2}
         if not isinstance(input_a, torch.Tensor):  # then the other is not neither
             input_a = torch.Tensor(input_a)
             input_b = torch.Tensor(input_b)
@@ -670,7 +667,7 @@ class SPPAgent(object):
 
         # compure score
         score = self.disc(input_a, input_b).detach().view(-1, 1)
-        # counterpart of GAN's minimax (also called "saturating") loss
+        # counterpart of GAN"s minimax (also called "saturating") loss
         # numerics: 0 for non-expert-like states, goes to +inf for expert-like states
         # compatible with envs with traj cutoffs for bad (non-expert-like) behavior
         # e.g. walking simulations that get cut off when the robot falls over
@@ -678,7 +675,7 @@ class SPPAgent(object):
         if self.hps.minimax_only:
             reward = minimax_reward
         else:
-            # counterpart of GAN's non-saturating loss
+            # counterpart of GAN"s non-saturating loss
             # recommended in the original GAN paper and later in (Fedus et al. 2017)
             # numerics: 0 for expert-like states, goes to -inf for non-expert-like states
             # compatible with envs with traj cutoffs for good (expert-like) behavior
@@ -690,11 +687,11 @@ class SPPAgent(object):
 
         return reward
 
-
     def update_target_net(self):
+        """Update the target networks"""
 
         if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
-            # If non-distributional, targets slowly track their non-target counterparts
+            # if non-distributional, targets slowly track their non-target counterparts
             for param, targ_param in zip(self.actr.parameters(), self.targ_actr.parameters()):
                 targ_param.data.copy_(self.hps.polyak * param.data +
                                       (1. - self.hps.polyak) * targ_param.data)
@@ -705,64 +702,68 @@ class SPPAgent(object):
                 for param, targ_param in zip(self.twin.parameters(), self.targ_twin.parameters()):
                     targ_param.data.copy_(self.hps.polyak * param.data +
                                           (1. - self.hps.polyak) * targ_param.data)
-        else:
-            # If distributional, periodically set target weights with online's
-            if self.iters_so_far % self.hps.targ_up_freq == 0:
-                self.targ_actr.load_state_dict(self.actr.state_dict())
-                self.targ_crit.load_state_dict(self.crit.state_dict())
-                if self.hps.clipped_double:
-                    self.targ_twin.load_state_dict(self.twin.state_dict())
+        elif self.crit_updates_so_far % self.hps.targ_up_freq == 0:
+            # distributional case: periodically set target weights with online models
+            self.targ_actr.load_state_dict(self.actr.state_dict())
+            self.targ_crit.load_state_dict(self.crit.state_dict())
+            if self.hps.clipped_double:
+                self.targ_twin.load_state_dict(self.twin.state_dict())
 
     def adapt_param_noise(self):
-        # adapt the parameter noise standard deviation
+        """Adapt the parameter noise standard deviation"""
+        assert self.replay_buffer is not None
 
         assert self.param_noise is not None, "you should not be here"
 
-        # Perturb separate copy of the policy to adjust the scale for the next 'real' perturbation
+        # perturb separate copy of the policy to adjust the scale for the next perturbation
+
         batch = self.replay_buffer.sample(self.hps.batch_size, patcher=None)
-        state = torch.Tensor(batch['obs0']).to(self.device)
-        # Update the perturbable params
+        state = torch.Tensor(batch["obs0"]).to(self.device)
+
+        # update the perturbable params
         for p in self.actr.perturbable_params:
             param = (self.actr.state_dict()[p]).clone()
             param_ = param.clone()
             noise = param_.data.normal_(0, self.param_noise.cur_std)
             self.apnp_actr.state_dict()[p].data.copy_((param + noise).data)
-        # Update the non-perturbable params
+
+        # update the non-perturbable params
         for p in self.actr.non_perturbable_params:
             param = self.actr.state_dict()[p].clone()
             self.apnp_actr.state_dict()[p].data.copy_(param.data)
 
-        # Compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
+        # compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
         if self.hps.wrap_absorb:
             state = self.remove_absorbing(state)[0][:, 0:-1]
         self.pn_dist = torch.sqrt(ff.mse_loss(self.actr.act(state), self.apnp_actr.act(state)))
         self.pn_dist = self.pn_dist.cpu().data.numpy()
 
-        # Adapt the parameter noise
+        # adapt the parameter noise
         self.param_noise.adapt_std(self.pn_dist)
 
     def reset_noise(self):
-        # reset noise process (must be used at episode termination)
+        """Reset noise process (must be used at episode termination)"""
 
-        # Reset action noise
+        # reset action noise
         if self.ac_noise is not None:
             self.ac_noise.reset()
 
-        # Reset parameter-noise-perturbed actor vars by redefining the pnp actor
+        # reset parameter-noise-perturbed actor vars by redefining the pnp actor
         # w.r.t. the actor (by applying additive gaussian noise with current std)
         if self.param_noise is not None:
-            # Update the perturbable params
+            # update the perturbable params
             for p in self.actr.perturbable_params:
                 param = (self.actr.state_dict()[p]).clone()
                 param_ = param.clone()
                 noise = param_.data.normal_(0, self.param_noise.cur_std)
                 self.pnp_actr.state_dict()[p].data.copy_((param + noise).data)
-            # Update the non-perturbable params
+            # update the non-perturbable params
             for p in self.actr.non_perturbable_params:
                 param = self.actr.state_dict()[p].clone()
                 self.pnp_actr.state_dict()[p].data.copy_(param.data)
 
     def save_to_path(self, path, xtra=None):
+        """Save the agent to disk"""
         # prep checkpoint
         suffix = f"checkpoint_{self.timesteps_so_far}"
         if xtra is not None:
@@ -770,50 +771,49 @@ class SPPAgent(object):
         suffix += ".tar"
         path = Path(path) / suffix
         checkpoint = {
-            'hps': self.hps,  # handy for archeology
-            'timesteps_so_far': self.timesteps_so_far,
+            "hps": self.hps,  # handy for archeology
+            "timesteps_so_far": self.timesteps_so_far,
             # and now the state_dict objects
-            'rms_obs': self.rms_obs.state_dict(),
-            'actr': self.actr.state_dict(),
-            'crit': self.crit.state_dict(),
-            'disc': self.disc.state_dict(),
-            'actr_opt': self.actr_opt.state_dict(),
-            'crit_opt': self.crit_opt.state_dict(),
-            'disc_opt': self.disc_opt.state_dict(),
-            'actr_sched': self.actr_sched.state_dict(),
+            "rms_obs": self.rms_obs.state_dict(),
+            "actr": self.actr.state_dict(),
+            "crit": self.crit.state_dict(),
+            "disc": self.disc.state_dict(),
+            "actr_opt": self.actr_opt.state_dict(),
+            "crit_opt": self.crit_opt.state_dict(),
+            "disc_opt": self.disc_opt.state_dict(),
+            "actr_sched": self.actr_sched.state_dict(),
         }
         if self.hps.clipped_double:
             checkpoint.update({
-                'twin': self.twin.state_dict(),
-                'twin_opt': self.twin_opt.state_dict(),
+                "twin": self.twin.state_dict(),
+                "twin_opt": self.twin_opt.state_dict(),
             })
         # save checkpoint to filesystem
         torch.save(checkpoint, path)
 
     def load_from_path(self, path):
+        """Load an agent from disk into this one"""
         checkpoint = torch.load(path)
-        if 'timesteps_so_far' in checkpoint:
-            self.timesteps_so_far = checkpoint['timesteps_so_far']
+        if "timesteps_so_far" in checkpoint:
+            self.timesteps_so_far = checkpoint["timesteps_so_far"]
         # the "strict" argument of `load_state_dict` is True by default
-        self.rms_obs.load_state_dict(checkpoint['rms_obs'])
-        self.actr.load_state_dict(checkpoint['actr'])
-        self.crit.load_state_dict(checkpoint['crit'])
-        self.disc.load_state_dict(checkpoint['disc'])
-        self.actr_opt.load_state_dict(checkpoint['actr_opt'])
-        self.crit_opt.load_state_dict(checkpoint['crit_opt'])
-        self.disc_opt.load_state_dict(checkpoint['disc_opt'])
-        self.actr_sched.load_state_dict(checkpoint['actr_sched'])
+        self.rms_obs.load_state_dict(checkpoint["rms_obs"])
+        self.actr.load_state_dict(checkpoint["actr"])
+        self.crit.load_state_dict(checkpoint["crit"])
+        self.disc.load_state_dict(checkpoint["disc"])
+        self.actr_opt.load_state_dict(checkpoint["actr_opt"])
+        self.crit_opt.load_state_dict(checkpoint["crit_opt"])
+        self.disc_opt.load_state_dict(checkpoint["disc_opt"])
+        self.actr_sched.load_state_dict(checkpoint["actr_sched"])
         if self.hps.clipped_double:
-            if 'twin' in checkpoint:
-                self.twin.load_state_dict(checkpoint['twin'])
-                if 'twin_opt' in checkpoint:
-                    self.twin_opt.load_state_dict(checkpoint['twin_opt'])
+            if "twin" in checkpoint:
+                self.twin.load_state_dict(checkpoint["twin"])
+                if "twin_opt" in checkpoint:
+                    self.twin_opt.load_state_dict(checkpoint["twin_opt"])
                 else:
                     logger.warn("twin opt is missing from the loaded tar!")
                     logger.warn("we move on nonetheless, from a fresh opt")
             else:
                 raise IOError("no twin found in checkpoint tar file")
-        else:
-            if 'twin' in checkpoint:
-                logger.warn("there is a twin the loaded tar, but you want none")
-
+        elif "twin" in checkpoint:  # in the case where clipped double is off
+            logger.warn("there is a twin the loaded tar, but you want none")

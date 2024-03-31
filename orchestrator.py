@@ -1,22 +1,14 @@
 import time
 from copy import deepcopy
-import os
 from pathlib import Path
 
 import wandb
+from wandb.errors import CommError
 import numpy as np
 
 from helpers import logger
 from helpers.console_util import timed_cm_wrapper, log_iter_info
 from helpers.opencv_util import record_video
-
-
-debug_lvl = os.environ.get('DEBUG_LVL', 0)
-try:
-    debug_lvl = np.clip(int(debug_lvl), a_min=0, a_max=3)
-except ValueError:
-    debug_lvl = 0
-DEBUG = bool(debug_lvl >= 1)
 
 
 def rollout(env, agent, rollout_len):
@@ -44,7 +36,7 @@ def rollout(env, agent, rollout_len):
         if agent.hps.wrap_absorb:
             _ob = np.append(ob, 0)
             _ac = np.append(ac, 0)
-            if done and not env._elapsed_steps == env._max_episode_steps:
+            if done and env._elapsed_steps != env._max_episode_steps:
                 # wrap with an absorbing state
                 _new_ob = np.append(np.zeros(agent.ob_shape), 1)
                 _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
@@ -120,7 +112,7 @@ def episode(env, agent, render):
     # generator that spits out a trajectory collected during a single episode
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
-    render_kwargs = {'mode': 'rgb_array'}
+    render_kwargs = {"mode": "rgb_array"}
     ob = np.array(env.reset())
     ob_rgb = env.render(**render_kwargs)
 
@@ -184,34 +176,42 @@ def evaluate(args, env, agent_wrapper, experiment_name):
     vid_dir = Path(args.video_dir) / experiment_name
     if args.record:
         vid_dir.mkdir(vid_dir, exist_ok=True)
+
     # create an agent
     agent = agent_wrapper()
+
     # create episode generator
     ep_gen = episode(env, agent, args.render)
+
     # load the model
-    agent.load(args.model_path, args.iter_num)
+    agent.load_from_path(args.model_path, args.iter_num)
     logger.info(f"model loaded from path:\n {args.model_path}")
 
-    # initialize the history data structures
-    ep_lens = []
-    ep_env_rets = []
     # collect trajectories
+
+    len_buff, env_ret_buff = [], []
+
     for i in range(args.num_trajs):
+
         logger.info(f"evaluating [{i + 1}/{args.num_trajs}]")
         traj = ep_gen.__next__()
-        ep_len, ep_env_ret = traj['ep_len'], traj['ep_env_ret']
+        ep_len, ep_env_ret = traj["ep_len"], traj["ep_env_ret"]
+
         # aggregate to the history data structures
-        ep_lens.append(ep_len)
-        ep_env_rets.append(ep_env_ret)
+        len_buff.append(ep_len)
+        env_ret_buff.append(ep_env_ret)
+
         if args.record:
             # record a video of the episode
-            record_video(vid_dir, i, traj['obs_rgb'])
+            record_video(vid_dir, i, traj["obs_rgb"])
 
-    # log some statistics of the collected trajectories
-    ep_len_mean = np.mean(ep_lens)
-    ep_env_ret_mean = np.mean(ep_env_rets)
-    logger.record_tabular("ep_len_mean", ep_len_mean)
-    logger.record_tabular("ep_env_ret_mean", ep_env_ret_mean)
+    eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
+
+    # log stats in csv
+    logger.record_tabular("timestep", agent.timesteps_so_far)
+    for k, v in eval_metrics.items():
+        logger.record_tabular(f"{k}-mean", np.mean(v))
+    logger.info("dumping stats in .csv file")
     logger.dump_tabular()
 
 
@@ -238,7 +238,7 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
 
         # group by everything except the seed, which is last, hence index -1
         # it groups by uuid + gitSHA + env_id + num_demos
-        group = '.'.join(experiment_name.split('.')[:-1])
+        group = ".".join(experiment_name.split(".")[:-1])
 
         # set up wandb
         while True:
@@ -252,13 +252,13 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                     dir=args.root,
                 )
                 break
-            except Exception:
+            except CommError:
                 pause = 10
                 logger.info("wandb co error. Retrying in {} secs.".format(pause))
                 time.sleep(pause)
         logger.info("wandb co established!")
 
-    for glob in ['train', 'explore', 'eval']:  # wandb categories
+    for glob in ["train", "explore", "eval"]:  # wandb categories
         # define a custom x-axis
         wandb.define_metric(f"{glob}/step")
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
@@ -278,10 +278,10 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
             log_iter_info(logger, i, args.num_timesteps // args.rollout_len, tstart)
 
         with timed("interacting"):
-            roll_gen.__next__()  # no need to get the returned rollout, stored in buffer
+            next(roll_gen)  # no need to get the returned rollout, stored in buffer
             agent.timesteps_so_far += args.rollout_len
 
-        with timed('training'):
+        with timed("training"):
             for _ in range(args.training_steps_per_iter):
 
                 if agent.param_noise is not None:
@@ -290,9 +290,9 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                         agent.adapt_param_noise()
                         if rank == 0:
                             agent.send_to_dash(
-                                {'pn_dist': agent.pn_dist, 'pn_cur_std': agent.pn_cur_std},
+                                {"pn_dist": agent.pn_dist, "pn_cur_std": agent.pn_cur_std},
                                 step_metric=agent.actr_update_so_far,
-                                glob='explore',
+                                glob="explore",
                             )  # `pn_dist`: action-space dist between perturbed and non-perturbed
                             # `pn_cur_std`: store the new std resulting from the adaption
 
@@ -300,7 +300,7 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # determine if updating the actr
-                    update_actr = not bool(agent.crit_updates_so_far % args.actor_update_delay),
+                    update_actr = not bool(agent.crit_updates_so_far % args.actor_update_delay)
                     # update the actor and critic
                     agent.update_actr_crit(
                         batch=batch,
@@ -326,26 +326,25 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                 for _ in range(args.eval_steps_per_iter):
 
                     # sample an episode with non-perturbed actor
-                    ep = ep_gen.__next__()
+                    ep = next(ep_gen)
                     # none of it is collected in the replay buffer
 
-                    len_buff.append(ep['ep_len'])
-                    env_ret_buff.append(ep['ep_env_ret'])
+                    len_buff.append(ep["ep_len"])
+                    env_ret_buff.append(ep["ep_env_ret"])
 
-                eval_metrics = {'ep_len': np.mean(len_buff), 'ep_env_ret': np.mean(env_ret_buff)}
+                eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
 
                 # log stats in csv
-                logger.record_tabular('timestep', agent.timesteps_so_far)
-                logger.record_tabular('ep_len', eval_metrics['ep_len'])
-                logger.record_tabular('ep_env_ret', eval_metrics['ep_env_ret'])
+                logger.record_tabular("timestep", agent.timesteps_so_far)
+                for k, v in eval_metrics.items():
+                    logger.record_tabular(f"{k}-mean", np.mean(v))
                 logger.info("dumping stats in .csv file")
                 logger.dump_tabular()
 
                 # log stats in dashboard
-                agent.send_to_dash(eval_metrics, step_metric=agent.timesteps_so_far, glob='eval')
+                agent.send_to_dash(eval_metrics, step_metric=agent.timesteps_so_far, glob="eval")
 
     if rank == 0:
         # save once we are done
         agent.save_to_path(ckpt_dir, xtra="done")
-        logger.info(f"we're done. saving model @:\n{ckpt_dir}\nbye.")
-
+        logger.info(f"we are done. saving model @:\n{ckpt_dir}\nbye.")

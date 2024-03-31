@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import platform
 from mpi4py import MPI
 import numpy as np
@@ -18,29 +19,31 @@ def mpi_mean_like(x, comm=COMM):
     assert comm is not None
     num_workers = comm.Get_size()
     x = np.asarray(x)
-    # Initialize element-wise sums across the workers
+    # initialize element-wise sums across the workers
     sums = np.empty_like(x)
-    # Sum x's elements across all mpi workers and put the result in `sums`
+    # sum x's elements across all mpi workers and put the result in `sums`
     comm.Allreduce(x, sums, op=MPI.SUM)
     means = sums / num_workers
-    # Make sure input and output have the same shape
+    # make sure input and output have the same shape
     assert means.shape == x.shape
     return means
 
 
-def mpi_mean_reduce_v(x, comm=COMM, axis=0, keepdims=False):
+def mpi_mean_reduce_v(x, comm=COMM, axis=0, *, keepdims=False):
     """Compute mean locally along `axis` and globally across mpi workers.
-    This is the verbose version (hence the 'v') as the number of reductions (local and
+    This is the verbose version (hence the "v") as the number of reductions (local and
     global) is also returned in the output tuple.
     """
     assert comm is not None
+
     x = np.asarray(x)
     assert x.ndim >= 1
-    # Collapse to x.ndim-1 dimensions by summin along `axis`
+
+    # collapse to x.ndim-1 dimensions by summin along `axis`
     sums = x.sum(axis=axis, keepdims=keepdims)
-    # Extract the number of elements
+    # extract the number of elements
     n = sums.size
-    # Create a vector of size n+1, put flattened `sums` in the first `n` slots
+    # create a vector of size n+1, put flattened `sums` in the first `n` slots
     # and put how many elements were reduced along `axis` in the n+1-th slot
     # (i.e. the number of elements involved in each reduction)
     local_sums = np.zeros(n + 1, dtype=x.dtype)
@@ -48,10 +51,10 @@ def mpi_mean_reduce_v(x, comm=COMM, axis=0, keepdims=False):
     reduction_depth = x.shape[axis]
     local_sums[:n] = flattened_sums
     local_sums[n] = reduction_depth
-    # Sum local_sums's elements across all mpi workers and put the result in `global_sum`
+    # sum local_sums"s elements across all mpi workers and put the result in `global_sum`
     global_sums = np.zeros_like(local_sums)
     comm.Allreduce(local_sums, global_sums, op=MPI.SUM)
-    # Unflatten the result (back to post-reduction along `axis` shape) and
+    # unflatten the result (back to post-reduction along `axis` shape) and
     # divide by the sum across workers of numbers of reductions.
     # In fine, in the returned tensor, each element corresponds to a sum along axis (local)
     # and across workers (global) divided by the sum (across workers) of number of local
@@ -59,13 +62,13 @@ def mpi_mean_reduce_v(x, comm=COMM, axis=0, keepdims=False):
     return global_sums[:n].reshape(sums.shape) / global_sums[n], global_sums[n]
 
 
-def mpi_mean_reduce(x, comm=COMM, axis=0, keepdims=False):
-    """Almost like 'mpi_mean_reduce_v', but only returns the mpi mean"""
+def mpi_mean_reduce(x, comm=COMM, axis=0, *, keepdims=False):
+    """Almost like "mpi_mean_reduce_v", but only returns the mpi mean"""
     mpi_mean, _ = mpi_mean_reduce_v(x=x, comm=comm, axis=axis, keepdims=keepdims)
     return mpi_mean
 
 
-def mpi_moments(x, comm=COMM, axis=0, keepdims=False):
+def mpi_moments(x, comm=COMM, axis=0, *, keepdims=False):
     """Compute mpi moments"""
     assert comm is not None
     x = np.asarray(x)
@@ -74,9 +77,9 @@ def mpi_moments(x, comm=COMM, axis=0, keepdims=False):
     mean, count = mpi_mean_reduce_v(x, axis=axis, comm=comm, keepdims=True)
     # Compute standard deviation
     squared_diffs = np.square(x - mean)
-    mean_squared_diff, count1 = mpi_mean_reduce_v(squared_diffs, axis=axis,
+    mean_squared_diff, count_ = mpi_mean_reduce_v(squared_diffs, axis=axis,
                                                   comm=comm, keepdims=True)
-    assert count1 == count1  # verify that nothing ominous happened when squaring
+    assert count == count_  # verify that nothing ominous happened when squaring
     std = np.sqrt(mean_squared_diff)
     if not keepdims:
         new_shape = mean.shape[:axis] + mean.shape[axis + 1:]
@@ -96,7 +99,7 @@ def average_gradients(model, device):
         avg_grads = mpi_mean_like(grads)
         # Create a torch tensor out of it
         avg_grads_tensor = torch.Tensor(avg_grads).to(device)
-        # Replace the param's gradient by the mpi-average
+        # Replace the param"s gradient by the mpi-average
         param.grad.copy_(avg_grads_tensor)
 
 
@@ -127,7 +130,7 @@ def sync_check(model, comm=COMM):
             comm.Bcast(param_, root=0)
             param_ = torch.FloatTensor(param_)
             assert torch.all(torch.eq(param.cpu(), param_.cpu())), "not in sync anymore"
-            # XXX: clusters with non-deterministic mpi computations make the `torch.eq` assert fail,
+            # clusters with non-deterministic mpi computations make the `torch.eq` assert fail,
             # use `torch.allclose` instead if needed
     logger.info("workers all synced with root")
 
@@ -136,18 +139,18 @@ def guess_available_gpus(n_gpus=None):
     """Retrieve availble gpus"""
     if n_gpus is not None:
         return list(range(n_gpus))
-    if 'CUDA_VISIBLE_DEVICES' in os.environ:
-        cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
-        cuda_visible_devices = cuda_visible_devices.split(',')
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        cuda_visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
+        cuda_visible_devices = cuda_visible_devices.split(",")
         return [int(n) for n in cuda_visible_devices]
-    if 'RCALL_NUM_GPU' in os.environ:
-        n_gpus = int(os.environ['RCALL_NUM_GPU'])
+    if "RCALL_NUM_GPU" in os.environ:
+        n_gpus = int(os.environ["RCALL_NUM_GPU"])
         return list(range(n_gpus))
-    nvidia_dir = '/proc/driver/nvidia/gpus/'
-    if os.path.exists(nvidia_dir):
+    nvidia_dir = "/proc/driver/nvidia/gpus/"
+    if Path(nvidia_dir).exists():
         n_gpus = len(os.listdir(nvidia_dir))
         return list(range(n_gpus))
-    raise Exception("couldn't guess the available gpus on this machine")
+    raise IOError("couldn't guess the available gpus on this machine")
 
 
 def setup_mpi_gpus(comm=COMM):
@@ -158,21 +161,19 @@ def setup_mpi_gpus(comm=COMM):
     processes_outranked_on_this_node = [n for n in nodes_ordered_by_rank[:comm.Get_rank()]
                                         if n == node_id]
     local_rank = len(processes_outranked_on_this_node)
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(available_gpus[local_rank])
-    print("rank {} will use gpu {}".format(local_rank, os.environ['CUDA_VISIBLE_DEVICES']))
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(available_gpus[local_rank])
+    logger.info("rank {} will use gpu {}".format(local_rank, os.environ["CUDA_VISIBLE_DEVICES"]))
 
-
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Normalizer.
 
 class RunMoms(object):
 
-    def __init__(self, shape, comm=COMM, use_mpi=True):
-        """Maintain running statistics across wrokers leveraging Chan's method"""
+    def __init__(self, shape, comm=COMM, *, use_mpi=True):
+        """Maintain running statistics across workers leveraging Chan's method"""
         self.use_mpi = use_mpi
-        # Initialize mean and var with float64 precision (objectively more accurate)
+        # initialize mean and var with float64 precision (objectively more accurate)
         self.mean = np.zeros(shape, dtype=np.float64)
         self.std = np.ones(shape, dtype=np.float64)
-        self.count = 1e-4  # HAXX to avoid any division by zero
+        self.count = 1e-4  # haxx to avoid any division by zero
         self.comm = comm
 
     def update(self, x):
@@ -202,9 +203,9 @@ class RunMoms(object):
         new_mean = self.mean + delta * batch_count / tot_count
         m_a = np.square(self.std) * self.count
         m_b = np.square(batch_std) * batch_count
-        M2 = m_a + m_b + np.square(delta) * self.count * batch_count / tot_count
+        m_2 = m_a + m_b + np.square(delta) * self.count * batch_count / tot_count
         # Compute new var
-        new_var = M2 / tot_count
+        new_var = m_2 / tot_count
         # Compute new count
         new_count = tot_count
         # Update moments
@@ -234,5 +235,5 @@ class RunMoms(object):
 
     def state_dict(self):
         _state_dict = self.__dict__.copy()
-        _state_dict.pop('comm')
+        _state_dict.pop("comm")
         return _state_dict

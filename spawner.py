@@ -69,12 +69,7 @@ class Spawner(object):
         # Retrieve config from filesystem
         self.config = yaml.safe_load(open(self.args.config))
 
-        # Check if we need expert demos
-        self.need_demos = self.config['meta']['algo'] == 'sam-dac'
-        if self.need_demos:
-            self.num_demos = [int(i) for i in self.args.num_demos]
-        else:
-            self.num_demos = [0]  # arbitrary, only used for dim checking
+        self.num_demos = [int(i) for i in self.args.num_demos]
 
         # Assemble wandb project name
         self.wandb_project = '-'.join([self.config['logging']['wandb_project'].upper(),

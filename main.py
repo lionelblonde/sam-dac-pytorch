@@ -1,10 +1,10 @@
 import os
+from pathlib import Path
 
 from mpi4py import MPI
 
 import numpy as np
 import torch
-from torch.backends import cudnn as cudnn
 
 import orchestrator
 from helpers import logger
@@ -14,37 +14,49 @@ from helpers.experiment import ExperimentInitializer
 from helpers.distributed_util import setup_mpi_gpus
 from helpers.env_makers import make_env
 from helpers.dataset import DemoDataset
-from helpers.memory import ReplayBuffer
+from agents.memory import ReplayBuffer
 from agents.spp_agent import SPPAgent
 
 
 def train(args):
 
-    # Get the current process rank
+    # mlsys
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     world_size = comm.Get_size()
 
-    args.algo = args.algo + '_' + str(world_size).zfill(3)
+    args.algo = f"{args.algo}-{str(world_size).zfill(3)}"
 
     torch.set_num_threads(1)
 
-    # Initialize and configure experiment
+    # set printing options
+    np.set_printoptions(precision=3)
+
+    # init experiment
     experiment = ExperimentInitializer(args, rank=rank, world_size=world_size)
     experiment.configure_logging()
-    name = experiment.get_name()
+    experiment_name = experiment.get_name()
 
     # device
+    assert not args.fp16 or args.cuda, "fp16 => cuda"
     if args.cuda:
+        # use cuda
         assert torch.cuda.is_available()
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         device = torch.device("cuda:0")
         setup_mpi_gpus()
     else:
+        if args.mps:  # TODO(lionel): add this as hp
+            assert torch.has_mps
+            # use Apple"s Metal Performance Shaders (MPS)
+            device = torch.device("mps")
+        else:
+            # default case: just use plain old cpu, no cuda or m-chip gpu
+            device = torch.device("cpu")
+
         os.environ["CUDA_VISIBLE_DEVICES"] = ""  # kill any possibility of usage
-        device = torch.device("cpu")
-    args.device = device  # add the device to hps for convenience
+
     logger.info(f"device in use: {device}")
 
     # seed
@@ -86,25 +98,25 @@ def train(args):
             replay_buffer=replay_buffer,
         )
 
-    # Create an evaluation environment not to mess up with training rollouts
+    # create an evaluation environment not to mess up with training rollouts
     eval_env = None
     if rank == 0:
-        eval_env = make_env(args.env_id, eval_seed)
+        eval_env, _, _ = make_env(args.env_id, eval_seed, args.wrap_absorb)
 
-    # Train
+    # train
     orchestrator.learn(
         args=args,
         rank=rank,
         env=env,
         eval_env=eval_env,
         agent_wrapper=agent_wrapper,
-        experiment_name=name,
+        experiment_name=experiment_name,
     )
 
-    # Close environment
+    # cleanup
+
     env.close()
 
-    # Close the eval env
     if eval_env is not None:
         assert rank == 0
         eval_env.close()
@@ -112,34 +124,37 @@ def train(args):
 
 def evaluate(args):
 
-    # Initialize and configure experiment
+    torch.set_num_threads(1)
+
+    # init experiment
     experiment = ExperimentInitializer(args)
     experiment.configure_logging()
-    # Create experiment name
     experiment_name = experiment.get_name()
 
-    # Seedify
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+    # device
+    device = torch.device("cpu")
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""  # kill any possibility of usage
+
+    # seed
     torch.manual_seed(args.seed)
-    random.seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
-    # Create environment
-    env = make_env(args.env_id, args.seed)
+    # env
+    env, shapes, max_ac = make_env(args.env_id, args.seed, args.wrap_absorb)
+    log_env_info(logger, env)
 
-    # Create an agent wrapper
-    if args.algo == 'sam-dac':
-        def agent_wrapper():
-            return SAMAgent(
-                env=env,
-                device='cpu',
-                hps=args,
-                expert_dataset=None,
-            )
-    else:
-        raise NotImplementedError("algorithm not covered")
+    # create an agent wrapper
+    def agent_wrapper():
+        return SPPAgent(
+            shapes=shapes,
+            max_ac=max_ac,
+            device=device,
+            hps=args,
+            expert_dataset=None,
+            replay_buffer=None,
+        )
 
-    # Evaluate
+    # evaluate
     orchestrator.evaluate(
         args=args,
         env=env,
@@ -147,22 +162,22 @@ def evaluate(args):
         experiment_name=experiment_name,
     )
 
-    # Close environment
+    # cleanup
     env.close()
 
 
-if __name__ == '__main__':
-    _args = argparser().parse_args()
+if __name__ == "__main__":
 
-    # Make the paths absolute
-    _args.root = os.path.dirname(os.path.abspath(__file__))
-    for k in ['checkpoints', 'logs', 'videos']:
-        new_k = "{}_dir".format(k[:-1])
-        vars(_args)[new_k] = os.path.join(_args.root, k)
+    args = argparser().parse_args()
 
-    if _args.task == 'train':
-        train(_args)
-    elif _args.task == 'eval':
-        evaluate(_args)
+    args.root = Path(__file__).resolve().parent  # make the paths absolute
+    for k in ("checkpoints", "logs", "videos"):
+        new_k = f"{k[:-1]}_dir"
+        vars(args)[new_k] = Path(args.root) / k
+
+    if args.task == "train":
+        train(args)
+    elif args.task == "evaluate":
+        evaluate(args)
     else:
         raise NotImplementedError

@@ -168,4 +168,3 @@ class DemoDataset(Dataset):
         logger.info(f"[DEMO DATASET] got {len(self)} transitions, from {self.num_demos} eps")
         logger.info(f"[DEMO DATASET] episodic length: {np.mean(lens)}({np.std(lens)})")
         logger.info(f"[DEMO DATASET] episodic return: {np.mean(rets)}({np.std(rets)})")
-

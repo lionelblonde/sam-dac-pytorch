@@ -1,7 +1,8 @@
 meta:
   task: 'train'
   benchmark: 'mujoco'
-  algo: 'sam-dac'
+  algo: 'samdac'
+
 
 resources:
   cuda: false
@@ -63,7 +64,6 @@ minimax_only: true
 ent_reg_scale: 0.001
 spectral_norm: false
 grad_pen: true
-grad_pen_type: 'wgan'
 grad_pen_targ: 1.
 grad_pen_scale: 10.
 one_sided_pen: true
