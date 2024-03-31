@@ -11,6 +11,9 @@ from helpers.console_util import timed_cm_wrapper, log_iter_info
 from helpers.opencv_util import record_video
 
 
+DEBUG = False
+
+
 def rollout(env, agent, rollout_len):
 
     t = 0
@@ -275,7 +278,7 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     while agent.timesteps_so_far <= args.num_timesteps:
 
         if i % 100 == 0 or DEBUG:
-            log_iter_info(logger, i, args.num_timesteps // args.rollout_len, tstart)
+            log_iter_info(i, args.num_timesteps // args.rollout_len, tstart)
 
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned rollout, stored in buffer

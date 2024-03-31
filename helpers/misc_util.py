@@ -1,5 +1,10 @@
+import time
 import argparse
 from typing import Optional
+from enum import IntEnum
+from contextlib import contextmanager
+
+from helpers import logger
 
 
 def zipsame(*seqs):
@@ -52,3 +57,43 @@ def boolean_flag(parser: argparse.ArgumentParser,
     dest = name.replace("-", "_")
     parser.add_argument("--" + name, action="store_true", default=default, dest=dest, help=hint)
     parser.add_argument("--no-" + name, action="store_false", dest=dest)
+
+
+class Colors(IntEnum):
+    GRAY = 30
+    RED = 31
+    GREEN = 32
+    YELLOW = 33
+    BLUE = 34
+    MAGENTA = 35
+    CYAN = 36
+    WHITE = 37
+    CRIMSON = 38
+
+
+def colorize(string: str, color: Colors, *, bold=False, highlight=False) -> str:
+    attr = []
+    num: int = Colors[color.name]
+    if highlight:
+        num += 10
+    bold_indicator = "1" if bold else ""
+    attr = f"{num};{bold_indicator}"
+    return f"\x1b[{attr}m{string}\x1b[0m"
+
+
+@contextmanager
+def timed(text: str):
+    pre_mess = text.ljust(50, ".")
+    logger.info(colorize(pre_mess, Colors.GRAY))
+    tstart = time.time()
+    yield
+    tot_time = time.time() - tstart
+    post_mess = f"done in {tot_time:.3f} seconds".rjust(50, ".")
+    logger.info(colorize(post_mess, Colors.CYAN))
+
+
+def log_iter_info(cur_iter: int, tot_num_iters: int, tstart: float):
+    """Display the current iteration and elapsed time"""
+    elapsed = prettify_time(int(time.time() - tstart))
+    mess = f"iter [{cur_iter}/{tot_num_iters}] <- elapsed time: {elapsed}".rjust(75, "=")
+    logger.info(colorize(mess, Colors.CRIMSON))

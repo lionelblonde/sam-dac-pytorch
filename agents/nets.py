@@ -12,6 +12,22 @@ STANDARDIZED_OB_CLAMPS = [-5., 5.]
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Core.
 
+def log_module_info(logger, name, model: nn.Module):
+
+    def _fmt(n):
+        if n // 10 ** 6 > 0:
+            return str(round(n / 10 ** 6, 2)) + ' M'
+        elif n // 10 ** 3:
+            return str(round(n / 10 ** 3, 2)) + ' k'
+        else:
+            return str(n)
+
+    logger.info(4 * ">" + " logging {} specs".format(name))
+    logger.info(model)
+    num_params = [p.numel() for p in model.parameters() if p.requires_grad]
+    logger.info("total trainable params: {}.".format(_fmt(sum(num_params))))
+
+
 def init(weight_scale=1., constant_bias=0.):
     """Perform orthogonal initialization"""
 
