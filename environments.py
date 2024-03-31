@@ -1,52 +1,51 @@
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> MuJoCo environments.
+# openai mujoco
 
 MUJOCO_ROBOTS = [
-    'InvertedPendulum',
-    'InvertedDoublePendulum',
-    'Reacher',
-    'Hopper',
-    'HalfCheetah',
-    'Walker2d',
-    'Ant',
-    'Humanoid',
+    "InvertedPendulum",
+    "InvertedDoublePendulum",
+    "Reacher",
+    "Hopper",
+    "HalfCheetah",
+    "Walker2d",
+    "Ant",
+    "Humanoid",
 ]
 
-MUJOCO_ENVS = ["{}-v2".format(name) for name in MUJOCO_ROBOTS]
-MUJOCO_ENVS.extend(["{}-v3".format(name) for name in MUJOCO_ROBOTS])
+MUJOCO_ENVS = [f"{name}-v2" for name in MUJOCO_ROBOTS]
+MUJOCO_ENVS.extend([f"{name}-v3" for name in MUJOCO_ROBOTS])
 
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> DM Control environments.
+# dmc
 
 DMC_ROBOTS = [
-    'Hopper-Hop',
-    'Cheetah-Run',
-    'Walker-Walk',
-    'Walker-Run',
+    "Hopper-Hop",
+    "Cheetah-Run",
+    "Walker-Walk",
+    "Walker-Run",
 
-    'Stacker-Stack_2',
-    'Stacker-Stack_4',
+    "Stacker-Stack_2",
+    "Stacker-Stack_4",
 
-    'Humanoid-Walk',
-    'Humanoid-Run',
-    'Humanoid-Run_Pure_State',
+    "Humanoid-Walk",
+    "Humanoid-Run",
+    "Humanoid-Run_Pure_State",
 
-    'Humanoid_CMU-Stand',
-    'Humanoid_CMU-Run',
+    "Humanoid_CMU-Stand",
+    "Humanoid_CMU-Run",
 
-    'Quadruped-Walk',
-    'Quadruped-Run',
-    'Quadruped-Escape',
-    'Quadruped-Fetch',
+    "Quadruped-Walk",
+    "Quadruped-Run",
+    "Quadruped-Escape",
+    "Quadruped-Fetch",
 
-    'Dog-Run',
-    'Dog-Fetch',
+    "Dog-Run",
+    "Dog-Fetch",
 ]
 
-DMC_ENVS = ["{}-Feat-v0".format(name) for name in DMC_ROBOTS]
+DMC_ENVS = [f"{name}-Feat-v0" for name in DMC_ROBOTS]
 # DMC_ENVS.extend(["{}-Pix-v0".format(name) for name in DMC_ROBOTS])  # no pixels yet
 
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Aggregate the environments
 
 BENCHMARKS = {
-    'mujoco': MUJOCO_ENVS,
-    'dmc': DMC_ENVS,
+    "mujoco": MUJOCO_ENVS,
+    "dmc": DMC_ENVS,
 }

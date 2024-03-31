@@ -86,7 +86,6 @@ usage: spawner.py [-h] [--config CONFIG] [--conda_env CONDA_ENV]
                   [--sweep] [--no-sweep] [--wandb_upgrade]
                   [--no-wandb_upgrade] [--num_demos NUM_DEMOS [NUM_DEMOS ...]]
                   [--debug] [--no-debug] [--wandb_dryrun] [--no-wandb_dryrun]
-                  [--debug_lvl DEBUG_LVL]
 
 Job Spawner
 
@@ -111,7 +110,6 @@ optional arguments:
   --no-debug
   --wandb_dryrun        toggle wandb offline mode
   --no-wandb_dryrun
-  --debug_lvl DEBUG_LVL
                         set the debug level for the spawned runs
 ```
 

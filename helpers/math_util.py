@@ -33,7 +33,7 @@ def huber_quant_reg_loss(td_errors, quantile, kappa=1.0):
 
 def smooth_out_w_ema(elist, weight):
     """Exponential moving average"""
-    assert 0. <= weight <= 1.
+    assert 0 <= weight <= 1
     acc = elist[0]  # accumulator
     smoothed_elist = []
     for e in elist:
@@ -41,4 +41,3 @@ def smooth_out_w_ema(elist, weight):
         smoothed_elist.append(smoothed_e)
         acc = smoothed_e
     return smoothed_elist
-

@@ -7,7 +7,7 @@ from wandb.errors import CommError
 import numpy as np
 
 from helpers import logger
-from helpers.console_util import timed_cm_wrapper, log_iter_info
+from helpers.misc_util import timed, log_iter_info
 from helpers.opencv_util import record_video
 
 
@@ -218,13 +218,10 @@ def evaluate(args, env, agent_wrapper, experiment_name):
     logger.dump_tabular()
 
 
-def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
+def learn(args, env, eval_env, agent_wrapper, experiment_name):
 
     # create an agent
     agent = agent_wrapper()
-
-    # create context manager that records the time taken by encapsulated ops
-    timed = timed_cm_wrapper(logger, use=DEBUG)
 
     # start clock
     tstart = time.time()
@@ -233,33 +230,31 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     ckpt_dir = Path(args.checkpoint_dir) / experiment_name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    if rank == 0:
+    # save the model as a dry run, to avoid bad surprises at the end
+    agent.save_to_path(ckpt_dir, xtra="dryrun")
+    logger.info(f"dry run. saving model @:\n{ckpt_dir}")
 
-        # save the model as a dry run, to avoid bad surprises at the end
-        agent.save_to_path(ckpt_dir, xtra="dryrun")
-        logger.info(f"dry run. saving model @:\n{ckpt_dir}")
+    # group by everything except the seed, which is last, hence index -1
+    # it groups by uuid + gitSHA + env_id + num_demos
+    group = ".".join(experiment_name.split(".")[:-1])
 
-        # group by everything except the seed, which is last, hence index -1
-        # it groups by uuid + gitSHA + env_id + num_demos
-        group = ".".join(experiment_name.split(".")[:-1])
-
-        # set up wandb
-        while True:
-            try:
-                wandb.init(
-                    project=args.wandb_project,
-                    name=experiment_name,
-                    id=experiment_name,
-                    group=group,
-                    config=args.__dict__,
-                    dir=args.root,
-                )
-                break
-            except CommError:
-                pause = 10
-                logger.info("wandb co error. Retrying in {} secs.".format(pause))
-                time.sleep(pause)
-        logger.info("wandb co established!")
+    # set up wandb
+    while True:
+        try:
+            wandb.init(
+                project=args.wandb_project,
+                name=experiment_name,
+                id=experiment_name,
+                group=group,
+                config=args.__dict__,
+                dir=args.root,
+            )
+            break
+        except CommError:
+            pause = 10
+            logger.info("wandb co error. Retrying in {} secs.".format(pause))
+            time.sleep(pause)
+    logger.info("wandb co established!")
 
     for glob in ["train", "explore", "eval"]:  # wandb categories
         # define a custom x-axis
@@ -270,8 +265,6 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
     roll_gen = rollout(env, agent, args.rollout_len)
     # create episode generator for evaluating the agent
     ep_gen = episode(eval_env, agent, args.render)
-    # the eval_env is None for all nonzero ranked worker,
-    # but only this worker will use its ep_gen (legibility)
 
     i = 0
 
@@ -291,13 +284,12 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                     if agent.actr_updates_so_far % args.pn_adapt_frequency == 0:
                         # adapt parameter noise
                         agent.adapt_param_noise()
-                        if rank == 0:
-                            agent.send_to_dash(
-                                {"pn_dist": agent.pn_dist, "pn_cur_std": agent.pn_cur_std},
-                                step_metric=agent.actr_update_so_far,
-                                glob="explore",
-                            )  # `pn_dist`: action-space dist between perturbed and non-perturbed
-                            # `pn_cur_std`: store the new std resulting from the adaption
+                        agent.send_to_dash(
+                            {"pn_dist": agent.pn_dist, "pn_cur_std": agent.pn_cur_std},
+                            step_metric=agent.actr_update_so_far,
+                            glob="explore",
+                        )  # `pn_dist`: action-space dist between perturbed and non-perturbed
+                        # `pn_cur_std`: store the new std resulting from the adaption
 
                 for _ in range(agent.hps.g_steps):
                     # sample a batch of transitions from the replay buffer
@@ -320,7 +312,7 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
 
         i += 1
 
-        if rank == 0 and agent.actr_updates_so_far % args.eval_frequency == 0:
+        if agent.actr_updates_so_far % args.eval_frequency == 0:
 
             with timed("evaluating"):
 
@@ -347,7 +339,6 @@ def learn(args, rank, env, eval_env, agent_wrapper, experiment_name):
                 # log stats in dashboard
                 agent.send_to_dash(eval_metrics, step_metric=agent.timesteps_so_far, glob="eval")
 
-    if rank == 0:
-        # save once we are done
-        agent.save_to_path(ckpt_dir, xtra="done")
-        logger.info(f"we are done. saving model @:\n{ckpt_dir}\nbye.")
+    # save once we are done
+    agent.save_to_path(ckpt_dir, xtra="done")
+    logger.info(f"we are done. saving model @:\n{ckpt_dir}\nbye.")

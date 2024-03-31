@@ -3,7 +3,7 @@ import torch
 
 class RunningMoments(object):
 
-    def __init__(self, shape: dict, device: torch.device):
+    def __init__(self, shape: tuple[int], device: torch.device):
         """Maintain running statistics across workers leveraging Chan's method"""
         self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)

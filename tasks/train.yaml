@@ -1,15 +1,15 @@
-meta:
-  task: 'train'
-  benchmark: 'mujoco'
-  algo: 'samdac'
+# meta
+task: "train"
+benchmark: "mujoco"
+algo: "samdac"
 
+# resources
+cuda: false
+fp16: false
 
-resources:
-  cuda: false
-
-logging:
-  wandb_project: 'damnlemons'
-  record: false
+# logging
+wandb_project: "damnlemons"
+record: false
 
 # training
 num_timesteps: 1e7

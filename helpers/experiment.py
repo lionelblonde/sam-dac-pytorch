@@ -1,6 +1,7 @@
 import random
 from pathlib import Path
 import subprocess
+from argparse import Namespace
 
 import yaml
 
@@ -25,8 +26,8 @@ def uuid(num_syllables=2, num_parts=3):
 
 class ConfigDumper:
 
-    def __init__(self, args, path):
-        # log the job config into a file
+    def __init__(self, args: Namespace, path: str):
+        """Log the job config into a file"""
         self.args = args
         Path(path).mkdir(exist_ok=True)
         self.path = path
@@ -39,50 +40,40 @@ class ConfigDumper:
 
 class ExperimentInitializer:
 
-    def __init__(self, args, rank=None, world_size=None):
+    def __init__(self, args):
+        """Initialize the experiment"""
         self.uuid_provided = (args.uuid is not None)
         self.uuid = args.uuid if self.uuid_provided else uuid()
         self.args = args
-        self.rank = rank
-        self.world_size = world_size
 
-    def configure_logging(self):
-
-        if self.rank is None:  # task: evaluate
-            logger.info("configuring logger for evaluation")
-            logger.configure(dir_=None, format_strs=["stdout"])
-
-        elif self.rank == 0:  # task: train, i.e. master here
+    def configure_logging(self, *, disable_logger: bool = False):
+        """Configure the experiment"""
+        if self.args.task == "train":
             log_path = Path(self.args.log_dir) / self.get_name()
             formats_strs = ["stdout", "log", "csv"]
-            fmtstr = "configuring logger"
-            if self.rank == 0:
-                fmtstr += " [master]"
-            logger.info(fmtstr)
-            logger.configure(dir_=log_path, format_strs=formats_strs)
-            fmtstr = "logger configured"
-            if self.rank == 0:
-                fmtstr += " [master]"
-            logger.info(fmtstr)
-            logger.info(f"  directory: {log_path}")
-            logger.info(f"  output formats: {formats_strs}")
-
+            logger.info("configuring logger")
+            logger.configure(dir_=str(log_path), format_strs=formats_strs)
+            logger.info("logger configured")
+            logger.info(f"==directory: {log_path}")
+            logger.info(f"==output formats: {formats_strs}")
             # in the same log folder, log args in a YAML file
-            config_dumper = ConfigDumper(args=self.args, path=log_path)
+            config_dumper = ConfigDumper(args=self.args, path=str(log_path))
             config_dumper.dump()
-            logger.info(f"experiment configured [{self.world_size} MPI workers]")
+            logger.info("experiment configured")
+        elif self.args.task == "eval":
+            logger.info("configuring logger for evaluation")
+            logger.configure(dir_=None, format_strs=["stdout"])
+        else:
+            raise ValueError(f"invalid task {self.args.task}")
 
-        else:  # train, worker
-            logger.info(f"configuring logger [worker #{self.rank}]")
-            logger.configure(dir_=None, format_strs=None)
-            logger.set_level(logger.DISABLED)
+        if disable_logger:
+            logger.set_level(logger.DISABLED)  # turn the logging off
 
     def get_name(self):
-
+        """Assemble long experiment name"""
         if self.uuid_provided:
             # if the uuid has been provided, use it
             return self.uuid
-
         # assemble the uuid
         name = self.uuid
         try:
@@ -100,6 +91,6 @@ class ExperimentInitializer:
         elif self.args.task == "evaluate":
             name += f".eval=trajs{str(self.args.num_trajs).zfill(2)}"
         else:
-            raise ValueError("only tasks: train and evaluate")
+            raise ValueError(f"invalid task {self.args.task}")
 
         return name

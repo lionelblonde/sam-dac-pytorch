@@ -11,11 +11,10 @@ from torch.utils.data import DataLoader
 from torch import autograd
 
 from helpers import logger
-from helpers.console_util import log_module_info
+from helpers.normalizer import RunningMoments
 from helpers.dataset import Dataset, DemoDataset
 from helpers.math_util import huber_quant_reg_loss
-from helpers.distributed_util import average_gradients, sync_with_root, RunMoms
-from agents.nets import Actor, Critic, Discriminator
+from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.param_noise import AdaptiveParamNoise
 from agents.ac_noise import NormalActionNoise, OUActionNoise
 from agents.memory import ReplayBuffer
@@ -80,68 +79,55 @@ class SPPAgent(object):
         # parse the noise types
         self.param_noise, self.ac_noise = self.parse_noise_type(self.hps.noise_type)
 
-
-
-
-
-
-
-
         # create observation normalizer that maintains running statistics
-        self.rms_obs = RunMoms(shape=self.ob_shape, use_mpi=True)
+        self.rms_obs = RunningMoments(shape=self.ob_shape, device=self.device)
 
         assert self.hps.ret_norm or not self.hps.popart
         assert not (self.hps.use_c51 and self.hps.ret_norm)
         assert not (self.hps.use_qr and self.hps.ret_norm)
         if self.hps.ret_norm:
-            # Create return normalizer that maintains running statistics
-            self.rms_ret = RunMoms(shape=(1,), use_mpi=False)
+            # create return normalizer that maintains running statistics
+            self.rms_ret = RunningMoments(shape=(1,), device=self.device)  # or shapes["rews"]
 
+        # create online and target nets
+        net_args = [self.ob_shape, self.ac_shape, self.hps, self.rms_obs, self.max_ac]
+        self.actr = Actor(*net_args).to(self.device)
+        self.targ_actr = Actor(*net_args).to(self.device)
+        self.crit = Critic(*net_args[:-1]).to(self.device)  # just not using the max ac
+        self.targ_crit = Critic(*net_args[:-1]).to(self.device)
 
-
-
-
-        # Create online and target nets, and initilize the target nets
-        self.actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
-        sync_with_root(self.actr)
-        self.targ_actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
+        # initilize the target nets
         self.targ_actr.load_state_dict(self.actr.state_dict())
-        self.crit = Critic(self.env, self.hps, self.rms_obs).to(self.device)
-        sync_with_root(self.crit)
-        self.targ_crit = Critic(self.env, self.hps, self.rms_obs).to(self.device)
         self.targ_crit.load_state_dict(self.crit.state_dict())
 
         if self.hps.clipped_double:
-            # Create second ("twin") critic and target critic
-            # TD3, https://arxiv.org/abs/1802.09477
-            self.twin = Critic(self.env, self.hps, self.rms_obs).to(self.device)
-            sync_with_root(self.twin)
-            self.targ_twin = Critic(self.env, self.hps, self.rms_obs).to(self.device)
+            # create second ("twin") critic and target critic
+            # ref: TD3, https://arxiv.org/abs/1802.09477
+            self.twin = Critic(*net_args[:-1]).to(self.device)
+            self.targ_twin = Critic(*net_args[:-1]).to(self.device)
             self.targ_twin.load_state_dict(self.twin.state_dict())
 
-
-
-
-
-
         if self.param_noise is not None:
-            # Create parameter-noise-perturbed ("pnp") actor
-            self.pnp_actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
+            # create parameter-noise-perturbed ("pnp") actor
+            self.pnp_actr = Actor(*net_args).to(self.device)
             self.pnp_actr.load_state_dict(self.actr.state_dict())
-            # Create adaptive-parameter-noise-perturbed ("apnp") actor
-            self.apnp_actr = Actor(self.env, self.hps, self.rms_obs).to(self.device)
+            # create adaptive-parameter-noise-perturbed ("apnp") actor
+            self.apnp_actr = Actor(*net_args).to(self.device)
             self.apnp_actr.load_state_dict(self.actr.state_dict())
 
-        # Set up the optimizers
-        self.actr_opt = torch.optim.Adam(self.actr.parameters(),
-                                         lr=self.hps.actor_lr)
-        self.crit_opt = torch.optim.Adam(self.crit.parameters(),
-                                         lr=self.hps.critic_lr,
-                                         weight_decay=self.hps.wd_scale)
+        # set up the optimizers
+        self.actr_opt = torch.optim.Adam(self.actr.parameters(), lr=self.hps.actor_lr)
+        self.crit_opt = torch.optim.Adam(
+            self.crit.parameters(),
+            lr=self.hps.critic_lr,
+            weight_decay=self.hps.wd_scale,
+        )
         if self.hps.clipped_double:
-            self.twin_opt = torch.optim.Adam(self.twin.parameters(),
-                                             lr=self.hps.critic_lr,
-                                             weight_decay=self.hps.wd_scale)
+            self.twin_opt = torch.optim.Adam(
+                self.twin.parameters(),
+                lr=self.hps.critic_lr,
+                weight_decay=self.hps.wd_scale,
+            )
 
         # set up lr scheduler
         self.actr_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -159,19 +145,15 @@ class SPPAgent(object):
                 drop_last=True,
             )
             assert len(self.e_dataloader) > 0
-            # Create discriminator
-            self.disc = Discriminator(self.env, self.hps, self.rms_obs).to(self.device)
-            sync_with_root(self.disc)
-            # Create optimizer
+            # create discriminator and its optimizer
+            self.disc = Discriminator(*net_args[:-1]).to(self.device)
             self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps.d_lr)
 
-
-
-        log_module_info(logger, "actr", self.actr)
-        log_module_info(logger, "crit", self.crit)
+        log_module_info(self.actr)
+        log_module_info(self.crit)
         if self.hps.clipped_double:
-            log_module_info(logger, "twin", self.crit)
-        log_module_info(logger, "disc", self.disc)
+            log_module_info(self.twin)
+        log_module_info(self.disc)
 
     def norm_rets(self, x):
         """Standardize if return normalization is used, do nothing otherwise"""
@@ -199,7 +181,9 @@ class SPPAgent(object):
             elif "adaptive-param" in cnt:
                 # set parameter noise
                 _, std = cnt.split("_")
-                param_noise = AdaptiveParamNoise(initial_std=float(std), delta=float(std))
+                param_noise = AdaptiveParamNoise(device=self.device,
+                                                 initial_std=float(std),
+                                                 delta=float(std))
                 logger.info(f"{param_noise} configured")
             elif "normal" in cnt:
                 _, std = cnt.split("_")
@@ -231,7 +215,7 @@ class SPPAgent(object):
                 # if this is a "flag" state (wrap absorbing): not used to update rms_obs
                 return
             _state = _state[0:-1]
-        self.rms_obs.update(_state)
+        self.rms_obs.update(torch.Tensor(_state).to(self.device))
 
     def sample_batch(self):
         """Sample a batch of transitions from the replay buffer"""
@@ -463,7 +447,6 @@ class SPPAgent(object):
 
         # update critic
         crit_loss.backward()
-        average_gradients(self.crit, self.device)
         self.crit_opt.step()
         self.crit_opt.zero_grad()
 
@@ -476,7 +459,6 @@ class SPPAgent(object):
         if twin_loss is not None:
             # update twin
             twin_loss.backward()
-            average_gradients(self.twin, self.device)
             self.twin_opt.step()
             self.twin_opt.zero_grad()
 
@@ -492,7 +474,6 @@ class SPPAgent(object):
 
             # update actor
             actr_loss.backward()
-            average_gradients(self.actr, self.device)
             if self.hps.clip_norm > 0:
                 cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
             self.actr_opt.step()
@@ -596,7 +577,6 @@ class SPPAgent(object):
             # update parameters
             self.disc_opt.zero_grad()
             disc_loss.backward()
-            average_gradients(self.disc, self.device)
             self.disc_opt.step()
 
             self.disc_updates_so_far += 1
@@ -693,15 +673,15 @@ class SPPAgent(object):
         if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
             # if non-distributional, targets slowly track their non-target counterparts
             for param, targ_param in zip(self.actr.parameters(), self.targ_actr.parameters()):
-                targ_param.data.copy_(self.hps.polyak * param.data +
-                                      (1. - self.hps.polyak) * targ_param.data)
+                targ_param.data.copy_(
+                    self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
             for param, targ_param in zip(self.crit.parameters(), self.targ_crit.parameters()):
-                targ_param.data.copy_(self.hps.polyak * param.data +
-                                      (1. - self.hps.polyak) * targ_param.data)
+                targ_param.data.copy_(
+                    self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
             if self.hps.clipped_double:
                 for param, targ_param in zip(self.twin.parameters(), self.targ_twin.parameters()):
-                    targ_param.data.copy_(self.hps.polyak * param.data +
-                                          (1. - self.hps.polyak) * targ_param.data)
+                    targ_param.data.copy_(
+                        self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
         elif self.crit_updates_so_far % self.hps.targ_up_freq == 0:
             # distributional case: periodically set target weights with online models
             self.targ_actr.load_state_dict(self.actr.state_dict())

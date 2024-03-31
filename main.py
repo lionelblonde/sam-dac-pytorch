@@ -1,39 +1,30 @@
 import os
 from pathlib import Path
-
-from mpi4py import MPI
+from argparse import Namespace
 
 import numpy as np
 import torch
 
 import orchestrator
 from helpers import logger
-from helpers.console_util import log_env_info
 from helpers.argparsers import argparser
 from helpers.experiment import ExperimentInitializer
-from helpers.distributed_util import setup_mpi_gpus
 from helpers.env_makers import make_env
 from helpers.dataset import DemoDataset
 from agents.memory import ReplayBuffer
 from agents.spp_agent import SPPAgent
 
 
-def train(args):
+def train(args: Namespace):
 
     # mlsys
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    world_size = comm.Get_size()
-
-    args.algo = f"{args.algo}-{str(world_size).zfill(3)}"
-
-    torch.set_num_threads(1)
+    torch.set_num_threads(1)  # TODO(lionel): keep an eye on this
 
     # set printing options
     np.set_printoptions(precision=3)
 
     # init experiment
-    experiment = ExperimentInitializer(args, rank=rank, world_size=world_size)
+    experiment = ExperimentInitializer(args)
     experiment.configure_logging()
     experiment_name = experiment.get_name()
 
@@ -45,7 +36,6 @@ def train(args):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         device = torch.device("cuda:0")
-        setup_mpi_gpus()
     else:
         if args.mps:  # TODO(lionel): add this as hp
             assert torch.has_mps
@@ -54,23 +44,17 @@ def train(args):
         else:
             # default case: just use plain old cpu, no cuda or m-chip gpu
             device = torch.device("cpu")
-
         os.environ["CUDA_VISIBLE_DEVICES"] = ""  # kill any possibility of usage
-
     logger.info(f"device in use: {device}")
 
     # seed
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-
     np_rng = np.random.default_rng(args.seed)
-
-    worker_seed = args.seed + (1000000 * (rank + 1))
     eval_seed = args.seed + 1000000
 
     # env
-    env, shapes, max_ac = make_env(args.env_id, worker_seed, args.wrap_absorb)
-    log_env_info(logger, env)
+    env, shapes, max_ac = make_env(args.env_id, args.seed, args.wrap_absorb)
 
     # create an agent wrapper
 
@@ -99,14 +83,11 @@ def train(args):
         )
 
     # create an evaluation environment not to mess up with training rollouts
-    eval_env = None
-    if rank == 0:
-        eval_env, _, _ = make_env(args.env_id, eval_seed, args.wrap_absorb)
+    eval_env, _, _ = make_env(args.env_id, eval_seed, args.wrap_absorb)
 
     # train
     orchestrator.learn(
         args=args,
-        rank=rank,
         env=env,
         eval_env=eval_env,
         agent_wrapper=agent_wrapper,
@@ -114,15 +95,11 @@ def train(args):
     )
 
     # cleanup
-
     env.close()
-
-    if eval_env is not None:
-        assert rank == 0
-        eval_env.close()
+    eval_env.close()
 
 
-def evaluate(args):
+def evaluate(args: Namespace):
 
     torch.set_num_threads(1)
 
@@ -141,7 +118,6 @@ def evaluate(args):
 
     # env
     env, shapes, max_ac = make_env(args.env_id, args.seed, args.wrap_absorb)
-    log_env_info(logger, env)
 
     # create an agent wrapper
     def agent_wrapper():
@@ -168,7 +144,7 @@ def evaluate(args):
 
 if __name__ == "__main__":
 
-    args = argparser().parse_args()
+    args: Namespace = argparser().parse_args()
 
     args.root = Path(__file__).resolve().parent  # make the paths absolute
     for k in ("checkpoints", "logs", "videos"):
