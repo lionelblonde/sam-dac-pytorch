@@ -16,10 +16,10 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--expert_path", help="demos location", type=str, default=None)
     parser.add_argument("--uuid", type=str, default=None)
     boolean_flag(parser, "cuda", default=False)
+    boolean_flag(parser, "fp16", default=False)
     boolean_flag(parser, "render", hint="render the interaction traces", default=False)
     boolean_flag(parser, "record", hint="record the interaction traces", default=False)
     parser.add_argument("--task", type=str, choices=["train", "evaluate"], default=None)
-    parser.add_argument("--algo", type=str, choices=["samdac"], default=None)
 
     # training
     parser.add_argument("--num_timesteps", help="total number of interactions",
@@ -71,14 +71,14 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--num_tau", type=int, default=200)
 
     # AIL
+    parser.add_argument("--num_demos", help="number of expert demo trajs for imitation",
+                        type=int, default=None)
     parser.add_argument("--g_steps", type=int, default=3)
     parser.add_argument("--d_steps", type=int, default=1)
     parser.add_argument("--d_lr", type=float, default=1e-5)
     boolean_flag(parser, "state_only", default=True)
     boolean_flag(parser, "minimax_only", default=True)
     parser.add_argument("--ent_reg_scale", type=float, default=0.001)
-    parser.add_argument("--num_demos", help="number of expert demo trajs for imitation",
-                        type=int, default=None)
     boolean_flag(parser, "spectral_norm", hint="whether to use spectral norm", default=False)
     boolean_flag(parser, "grad_pen", hint="whether to use gradient penalty", default=True)
     parser.add_argument("--grad_pen_targ", type=float, default=1.)
