@@ -259,15 +259,16 @@ def configure(dir_=None, format_strs=None):
     """Configure logger (called in configure_default_logger)"""
     if dir_ is None:
         dir_ = Path(tempfile.gettempdir())
-        dir_ /= datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%d-%H-%M-%S-%f_temp_log")
+        dir_ /= datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+            "%Y-%m-%d-%H-%M-%S-%f_temp_log")
     else:
-        # Make sure the directory is provided as a string
+        # make sure the directory is provided as a string
         assert isinstance(dir_, str), f"wrong type: {type(dir_)} > must be str"
-        # Make sure the provided directory exists
+        # make sure the provided directory exists
         Path(dir_).mkdir(parents=True, exist_ok=True)
     if format_strs is None:
         format_strs = []
-    # Setup the output formats
+    # setup the output formats
     output_formats = [make_output_format(f, dir_) for f in format_strs]
     Logger.CURRENT = Logger(dir_=dir_, output_formats=output_formats)
 

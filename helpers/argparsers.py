@@ -13,7 +13,6 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--wandb_project", help="wandb project name", default="DEFAULT")
     parser.add_argument("--env_id", help="environment identifier", default=None)
     parser.add_argument("--seed", help="RNG seed", type=int, default=0)
-    parser.add_argument("--expert_path", help="demos location", type=str, default=None)
     parser.add_argument("--uuid", type=str, default=None)
     boolean_flag(parser, "cuda", default=False)
     boolean_flag(parser, "fp16", default=False)
@@ -26,7 +25,8 @@ def argparser(description="DDPG Experiment"):
                         type=int, default=int(1e7))
     parser.add_argument("--training_steps_per_iter", type=int, default=4)
     parser.add_argument("--eval_steps_per_iter", type=int, default=10)
-    parser.add_argument("--eval_frequency", type=int, default=10)
+    parser.add_argument("--eval_every", type=int, default=10)
+    parser.add_argument("--save_every", type=int, default=10)
 
     # model
     boolean_flag(parser, "layer_norm", default=False)
@@ -36,6 +36,7 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--critic_lr", type=float, default=1e-4)
     parser.add_argument("--clip_norm", type=float, default=1.)
     parser.add_argument("--wd_scale", help="weight decay scale", type=float, default=0.001)
+    parser.add_argument("--acc_grad_steps", type=int, default=8)
 
     # algorithm
     parser.add_argument("--rollout_len", help="number of interactions per iteration",
@@ -44,7 +45,7 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--gamma", help="discount factor", type=float, default=0.99)
     parser.add_argument("--mem_size", type=int, default=int(1e5))
     parser.add_argument("--noise_type", type=str, default="adaptive-param_0.2, ou_0.1, normal_0.1")
-    parser.add_argument("--pn_adapt_frequency", type=float, default=50)
+    parser.add_argument("--pn_adapt_frequency", type=float, default=50.)
     parser.add_argument("--polyak", type=float, default=0.005, help="soft target nets update")
     parser.add_argument("--targ_up_freq", type=int, default=100, help="hard target nets update")
     boolean_flag(parser, "n_step_returns", default=True)
@@ -71,6 +72,7 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--num_tau", type=int, default=200)
 
     # AIL
+    parser.add_argument("--expert_path", help="demos location", type=str, default=None)
     parser.add_argument("--num_demos", help="number of expert demo trajs for imitation",
                         type=int, default=None)
     parser.add_argument("--g_steps", type=int, default=3)
@@ -85,14 +87,11 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--grad_pen_scale", type=float, default=10.)
     boolean_flag(parser, "one_sided_pen", hint="whether to use the one-sided v", default=True)
     boolean_flag(parser, "historical_patching", default=True)
-    boolean_flag(parser, "wrap_absorb", default=False)
+    boolean_flag(parser, "wrap_absorb", default=True)
     boolean_flag(parser, "d_batch_norm", default=False)
 
-    # Evaluation
-    parser.add_argument("--model_path", type=str, default=None)
-    parser.add_argument("--num_trajs", help="number of trajectories to evaluate",
-                        type=int, default=10)
-    parser.add_argument("--iter_num", help="iteration to evaluate the model at",
-                        type=str, default=None)  # the number might have a suffix
-
+    # evaluation
+    parser.add_argument("--checkpoint_path", type=str, default=None)
+    parser.add_argument("--checkpoint_suffix", type=str, default=None)
+    parser.add_argument("--num_trajs", type=int, default=10)
     return parser

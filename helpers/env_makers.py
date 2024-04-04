@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-import gym
+import gymnasium as gym
 
 import numpy as np
 

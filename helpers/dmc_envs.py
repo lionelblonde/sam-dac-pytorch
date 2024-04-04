@@ -1,17 +1,93 @@
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 
 from dm_control import suite
 from dm_env import specs
 
 from dm_control.suite.wrappers import pixels
 
-from helpers.atari_wrappers import TimeLimit, WarpFrame
 from helpers.opencv_util import OpenCVImageViewer
 
 
 # for domain_name, task_name in suite.ALL_TASKS:
 #     print(domain_name, task_name)
+
+
+# these were initially use as atari wrappers
+
+class TimeLimit(gym.Wrapper):
+
+    def __init__(self, env, max_episode_steps=None):
+        super(TimeLimit, self).__init__(env)
+        self._max_episode_steps = max_episode_steps
+        self._elapsed_steps = 0
+
+    def step(self, ac):
+        observation, reward, done, info = self.env.step(ac)
+        self._elapsed_steps += 1
+        if self._elapsed_steps >= self._max_episode_steps:
+            done = True
+            info['TimeLimit.truncated'] = True
+        return observation, reward, done, info
+
+    def reset(self, **kwargs):
+        self._elapsed_steps = 0
+        return self.env.reset(**kwargs)
+
+
+class WarpFrame(gym.ObservationWrapper):
+
+    def __init__(self, env, width=84, height=84, grayscale=True, dict_space_key=None):
+        """
+        Warp frames to 84x84 as done in the Nature paper and later work.
+
+        If the environment uses dictionary observations, `dict_space_key` can be specified
+        which indicates which observation should be warped.
+        """
+        super().__init__(env)
+        self.width = width
+        self.height = height
+        self.grayscale = grayscale
+        self.key = dict_space_key
+        if self.grayscale:
+            self.num_colors = 1
+        else:
+            self.num_colors = 3
+
+        new_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(self.height, self.width, self.num_colors),
+            dtype=np.uint8,
+        )
+        if self.key is None:
+            original_space = self.observation_space
+            self.observation_space = new_space
+        else:
+            original_space = self.observation_space.spaces[self.key]
+            self.observation_space.spaces[self.key] = new_space
+        assert original_space.dtype == np.uint8 and len(original_space.shape) == 3
+
+    def observation(self, obs):
+        if self.key is None:
+            frame = obs
+        else:
+            frame = obs[self.key]
+
+        if self.grayscale:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        frame = cv2.resize(
+            frame, (self.width, self.height), interpolation=cv2.INTER_AREA
+        )
+        if self.grayscale:
+            frame = np.expand_dims(frame, -1)
+
+        if self.key is None:
+            obs = frame
+        else:
+            obs = obs.copy()
+            obs[self.key] = frame
+        return obs
 
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Core.

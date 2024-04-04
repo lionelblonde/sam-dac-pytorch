@@ -78,7 +78,8 @@ class ExperimentInitializer:
         name = self.uuid
         try:
             out = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"])
-            name += f".gitSHA_{out.strip().decode("ascii")}"
+            sha = out.strip().decode("ascii")
+            name += f".gitSHA_{sha}"
         except OSError:
             pass
 

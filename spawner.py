@@ -206,7 +206,8 @@ class Spawner(object):
             "num_timesteps": int(float(self.config.get("num_timesteps", 2e7))),
             "training_steps_per_iter": self.config.get("training_steps_per_iter", 2),
             "eval_steps_per_iter": self.config.get("eval_steps_per_iter", 10),
-            "eval_frequency": self.config.get("eval_frequency", 10),
+            "eval_every": self.config.get("eval_every", 10),
+            "save_every": self.config.get("save_every", 10),
 
             # model
             "layer_norm": self.config["layer_norm"],
@@ -216,6 +217,7 @@ class Spawner(object):
             "critic_lr": float(self.config.get("critic_lr", 3e-4)),
             "clip_norm": self.config["clip_norm"],
             "wd_scale": float(self.config.get("wd_scale", 3e-4)),
+            "acc_grad_steps": int(self.config.get("acc_grad_step", 8)),
 
             # algorithm
             "rollout_len": self.config.get("rollout_len", 2),
