@@ -83,17 +83,17 @@ def colorize(string: str, color: Colors, *, bold=False, highlight=False) -> str:
 
 @contextmanager
 def timed(text: str):
-    pre_mess = text.ljust(50, ".")
+    pre_mess = f"::{text}::"
     logger.info(colorize(pre_mess, Colors.GRAY))
     tstart = time.time()
     yield
     tot_time = time.time() - tstart
-    post_mess = f"done in {tot_time:.3f} seconds".rjust(50, ".")
+    post_mess = f"done in {tot_time:.3f} seconds".rjust(50, ":")
     logger.info(colorize(post_mess, Colors.CYAN))
 
 
 def log_iter_info(cur_iter: int, tot_num_iters: int, tstart: float):
     """Display the current iteration and elapsed time"""
     elapsed = prettify_time(int(time.time() - tstart))
-    mess = f"iter [{cur_iter}/{tot_num_iters}] <- elapsed time: {elapsed}".rjust(75, "=")
+    mess = f"iter [{cur_iter}/{tot_num_iters}] <- elapsed time: {elapsed}".rjust(75, ":")
     logger.info(colorize(mess, Colors.CRIMSON))

@@ -16,6 +16,7 @@ def argparser(description="DDPG Experiment"):
     parser.add_argument("--uuid", type=str, default=None)
     boolean_flag(parser, "cuda", default=False)
     boolean_flag(parser, "fp16", default=False)
+    boolean_flag(parser, "mps", default=False)
     boolean_flag(parser, "render", hint="render the interaction traces", default=False)
     boolean_flag(parser, "record", hint="record the interaction traces", default=False)
     parser.add_argument("--task", type=str, choices=["train", "evaluate"], default=None)

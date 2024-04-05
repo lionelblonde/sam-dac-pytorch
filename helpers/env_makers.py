@@ -1,12 +1,11 @@
 import os
 from pathlib import Path
 
-import gymnasium as gym
-
 import numpy as np
 
+import gymnasium as gym
+
 from helpers import logger
-from helpers.dmc_envs import make_dmc
 import environments
 
 
@@ -17,20 +16,18 @@ def get_benchmark(env_id):
         if env_id in v:
             benchmark = k
             continue
+    mes = "this benchmark has been flagged as deprecated"
     assert benchmark is not None, "unsupported environment"
+    assert not environments.DEPRECATION_FLAGS[benchmark], mes  # order of asserts matter here (T-C)
     return benchmark
 
 
-def make_env(env_id, seed, wrap_absorb):
+def make_env(env_id, wrap_absorb):
     # create an environment
-    benchmark = get_benchmark(env_id)
+    bench = get_benchmark(env_id)  # at this point benchmark is valid
 
-    if benchmark == "dmc":
-        # import here to avoid glew issues altogether if not using anyway
-        return make_dmc(env_id)
-
-    if benchmark == "mujoco":
-        # remove the lockfile if it exists
+    if bench == "farama_mujoco":
+        # remove the lockfile if it exists (maybe not a thing in Farama's Gymnasium anymore?)
         lockfile = (Path(os.environ["CONDA_PREFIX"]) / "lib" / "python3.7" / "site-packages" /
                     "mujoco_py" / "generated" / "mujocopy-buildlock.lock")
         try:
@@ -39,29 +36,42 @@ def make_env(env_id, seed, wrap_absorb):
         except OSError:
             pass
 
+        return make_farama_mujoco_env(env_id, wrap_absorb)
+    raise ValueError(f"invalid benchmark: {bench}")
+
+
+def make_farama_mujoco_env(env_id, wrap_absorb):  # not ideal for code golf, but clearer for debug
+
     # create env and seed it
     env = gym.make(env_id)
-    env.seed(seed)
+    # normally the windowed one is "human" .other option for later: "rgb_array", but prefer:
+    # the following: `from gymnasium.wrappers.pixel_observation import PixelObservationWrapper`
 
     # build shapes for nets and replay buffer
-    shapes = {}
+    net_shapes = {}
+    erb_shapes = {}
 
     # for the nets
-    ob_shape = env.obvervation_space.shape
+    ob_space = env.observation_space
+    assert isinstance(ob_space, gym.spaces.Box)  # for due diligence
+    ob_shape = ob_space.shape
+    assert ob_shape is not None
     ac_space = env.action_space  # used now and later to get max action
-    if hasattr(ac_space, "n"):
-        raise AttributeError(f"env has discrete dim: {ac_space.n}")
+    if isinstance(ac_space, gym.spaces.Discrete):
+        raise TypeError(f"env ({env}) is discrete: out of scope here")
+    assert isinstance(ac_space, gym.spaces.Box)  # to ensure `high` and `low` exist
     ac_shape = ac_space.shape
-    shapes.update({"ob_shape": ob_shape, "ac_shape": ac_shape})
+    assert ac_shape is not None
+    net_shapes.update({"ob_shape": ob_shape, "ac_shape": ac_shape})
 
     # for the replay buffer
     if wrap_absorb:
-        assert len(list(ob_shape)) == 1, "wrap absorb only work for non-pix envs"
+        assert len(ob_shape) == 1, "wrap absorb only works for non-pix envs"
         ob_dim = ob_dim_orig = ob_shape[0]
         ac_dim = ac_dim_orig = ac_shape[0]  # for both: num dims
         ob_dim += 1
         ac_dim += 1
-        shapes.update({
+        erb_shapes.update({
             "obs0": (ob_dim,),
             "obs1": (ob_dim,),
             "acs": (ac_dim,),
@@ -72,7 +82,7 @@ def make_env(env_id, seed, wrap_absorb):
             "acs_orig": (ac_dim_orig,),
         })
     else:
-        shapes.update({
+        erb_shapes.update({
             "obs0": ob_shape,
             "obs1": ob_shape,
             "acs": ac_shape,
@@ -86,9 +96,11 @@ def make_env(env_id, seed, wrap_absorb):
         np.abs(np.amin(ac_space.low.astype("float32"))),
     )
 
-    if benchmark == "mujoco":
-        pass  # weird, but struct kept general if adding other envs
-    else:
-        raise ValueError("unsupported benchmark")
+    # max episode length
+    # use to be needed to determine the nature of termination in env
+    # (Farama's Gymnasium make the distinction now in the `step` output)
+    # now it is just needed to wrap the absorbing states in the demo dataset
+    assert env.spec is not None
+    max_env_steps = env.spec.max_episode_steps
 
-    return env, shapes, max_ac
+    return env, net_shapes, erb_shapes, max_ac, max_env_steps

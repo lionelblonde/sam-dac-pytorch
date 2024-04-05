@@ -280,7 +280,7 @@ def configure_default_logger():
     # Configure the current logger
     configure(format_strs=format_strs)  # makes Logger.CURRENT be not None anymore
     # Logging successful configuration of default logger
-    log("configuring default logger for each worker (logging to stdout only by default)")
+    log("configuring default logger (logging to stdout only by default)")
     # Define the default logger with the current logger
     Logger.DEFAULT = Logger.CURRENT
 

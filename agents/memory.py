@@ -51,11 +51,10 @@ class RingBuffer(object):
 
 class ReplayBuffer(object):
 
-    def __init__(self, np_rng, capacity, shapes):
+    def __init__(self, np_rng, capacity, erb_shapes):
         self.np_rng = np_rng
         self.capacity = capacity
-        self.shapes = shapes
-        self.ring_buffers = {n: RingBuffer(self.capacity, s) for n, s in self.shapes.items()}
+        self.ring_buffers = {n: RingBuffer(self.capacity, s) for n, s in erb_shapes.items()}
 
     def batchify(self, idxs):
         """Collect a batch from indices"""
@@ -143,6 +142,8 @@ class ReplayBuffer(object):
 
     def append(self, transition):
         """Add a transition to the replay buffer"""
+        print(self.ring_buffers.keys())
+        print(transition.keys())
         assert self.ring_buffers.keys() == transition.keys(), "keys must coincide"
         for k in self.ring_buffers:
             self.ring_buffers[k].append(transition[k])

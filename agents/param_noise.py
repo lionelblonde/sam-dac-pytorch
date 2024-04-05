@@ -12,10 +12,10 @@ class AdaptiveParamNoise(object):
             initial_std (float): Initial parameter noise standard deviation
             delta (float): Threshold used in the adaptive noise scaling heuristic
         """
-        self.initial_std = torch.Tensor(initial_std).to(device)
-        self.delta = torch.Tensor(delta).to(device)
-        # initialize the current standard deviation
-        self.cur_std = torch.Tensor(initial_std).to(device)
+        # create tensor from float data: we need use torch.tensor, not torch.Tensor
+        self.initial_std = torch.tensor(initial_std).to(device)
+        self.delta = torch.tensor(delta).to(device)
+        self.cur_std = torch.tensor(initial_std).to(device)  # initialize the current std
 
     def adapt_std(self, dist: torch.Tensor):
         """Adapt the parameter noise standard deviation based on distance `dist`

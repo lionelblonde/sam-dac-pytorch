@@ -14,13 +14,14 @@ from helpers.opencv_util import record_video
 DEBUG = False
 
 
-def rollout(env, agent, rollout_len):
+def rollout(env, agent, seed, rollout_len):
 
     t = 0
     # reset agent noise process
     agent.reset_noise()
     # reset agent env
-    ob = np.array(env.reset())
+    ob, _ = env.reset(seed=seed)  # seed is a keyword argument, not positional
+    ob = np.array(ob)
 
     while True:
 
@@ -34,12 +35,18 @@ def rollout(env, agent, rollout_len):
             yield
 
         # interact with env
-        new_ob, _, done, _ = env.step(ac)
+        new_ob, _, terminated, truncated, _ = env.step(ac)
+        done = terminated or truncated  # read about what truncation means at the link below:
+        # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
+        if truncated and env._elapsed_steps != env._max_episode_steps:
+            logger.warn("termination caused by something else than time limit; OO-bounds?")
 
         if agent.hps.wrap_absorb:
             _ob = np.append(ob, 0)
             _ac = np.append(ac, 0)
-            if done and env._elapsed_steps != env._max_episode_steps:
+
+            # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
+            if terminated:
                 # wrap with an absorbing state
                 _new_ob = np.append(np.zeros(agent.ob_shape), 1)
                 _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
@@ -106,23 +113,22 @@ def rollout(env, agent, rollout_len):
             # reset agent noise process
             agent.reset_noise()
             # reset the env
-            ob = np.array(env.reset())
+            ob, _ = env.reset(seed=seed)
+            ob = np.array(ob)
 
         t += 1
 
 
-def episode(env, agent, render):
+def episode(env, agent, seed):
     # generator that spits out a trajectory collected during a single episode
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
-    render_kwargs = {"mode": "rgb_array"}
-    ob = np.array(env.reset())
-    ob_rgb = env.render(**render_kwargs)
+    ob, _ = env.reset(seed=seed)
+    ob = np.array(ob)
 
     cur_ep_len = 0
     cur_ep_env_ret = 0
     obs = []
-    obs_rgb = []
     acs = []
     env_rews = []
 
@@ -135,14 +141,9 @@ def episode(env, agent, render):
         ac = np.clip(ac, env.action_space.low, env.action_space.high)
 
         obs.append(ob)
-        obs_rgb.append(ob_rgb)
         acs.append(ac)
-        new_ob, env_rew, done, _ = env.step(ac)
-
-        if render:
-            env.render()
-
-        ob_rgb = env.render(**render_kwargs)
+        new_ob, env_rew, terminated, truncated, _ = env.step(ac)
+        done = terminated or truncated
 
         env_rews.append(env_rew)
         cur_ep_len += 1
@@ -151,12 +152,10 @@ def episode(env, agent, render):
 
         if done:
             obs = np.array(obs)
-            obs_rgb = np.array(obs_rgb)
             acs = np.array(acs)
             env_rews = np.array(env_rews)
             out = {
                 "obs": obs,
-                "obs_rgb": obs_rgb,
                 "acs": acs,
                 "env_rews": env_rews,
                 "ep_len": cur_ep_len,
@@ -167,11 +166,10 @@ def episode(env, agent, render):
             cur_ep_len = 0
             cur_ep_env_ret = 0
             obs = []
-            obs_rgb = []
             acs = []
             env_rews = []
-            ob = np.array(env.reset())
-            ob_rgb = env.render(**render_kwargs)
+            ob, _ = env.reset(seed=seed)
+            ob = np.array(ob)
 
 
 def evaluate(args, env, agent_wrapper, experiment_name):
@@ -184,7 +182,7 @@ def evaluate(args, env, agent_wrapper, experiment_name):
     agent = agent_wrapper()
 
     # create episode generator
-    ep_gen = episode(env, agent, args.render)
+    ep_gen = episode(env, agent, args.seed)
 
     # load the model
     agent.load_from_path(args.model_path, args.iter_num)
@@ -197,7 +195,7 @@ def evaluate(args, env, agent_wrapper, experiment_name):
     for i in range(args.num_trajs):
 
         logger.info(f"evaluating [{i + 1}/{args.num_trajs}]")
-        traj = ep_gen.__next__()
+        traj = next(ep_gen)
         ep_len, ep_env_ret = traj["ep_len"], traj["ep_env_ret"]
 
         # aggregate to the history data structures
@@ -206,7 +204,7 @@ def evaluate(args, env, agent_wrapper, experiment_name):
 
         if args.record:
             # record a video of the episode
-            record_video(vid_dir, i, traj["obs_rgb"])
+            record_video(vid_dir, i, traj["obs"])
 
     eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
 
@@ -262,9 +260,10 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
 
     # create rollout generator for training the agent
-    roll_gen = rollout(env, agent, args.rollout_len)
+    roll_gen = rollout(env, agent, args.seed, args.rollout_len)
     # create episode generator for evaluating the agent
-    ep_gen = episode(eval_env, agent, args.render)
+    eval_seed = args.seed + 123456  # arbitrary choice
+    ep_gen = episode(eval_env, agent, eval_seed)
 
     i = 0
 
@@ -285,8 +284,8 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
                         # adapt parameter noise
                         agent.adapt_param_noise()
                         agent.send_to_dash(
-                            {"pn_dist": agent.pn_dist, "pn_cur_std": agent.pn_cur_std},
-                            step_metric=agent.actr_update_so_far,
+                            {"pn_dist": agent.pn_dist, "pn_cur_std": agent.param_noise.cur_std},
+                            step_metric=agent.actr_updates_so_far,
                             glob="explore",
                         )  # `pn_dist`: action-space dist between perturbed and non-perturbed
                         # `pn_cur_std`: store the new std resulting from the adaption
@@ -308,11 +307,9 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
                     # update the discriminator
                     agent.update_disc(batch)  # update counter incremented internally too
 
-            agent.iters_so_far += 1
-
         i += 1
 
-        if agent.actr_updates_so_far % args.eval_frequency == 0:
+        if agent.actr_updates_so_far % args.eval_every == 0:
 
             with timed("evaluating"):
 

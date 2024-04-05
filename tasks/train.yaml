@@ -15,7 +15,7 @@ record: false
 num_timesteps: 1e7
 training_steps_per_iter: 2
 eval_steps_per_iter: 10
-eval_frequency: 10000
+eval_every: 10000
 
 # model
 layer_norm: true

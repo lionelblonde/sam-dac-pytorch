@@ -163,15 +163,10 @@ class Actor(nn.Module):
         self.a_fc_stack.apply(init())
         self.a_head.apply(init())
 
-    def act(self, ob):
-        out = self.forward(ob)
-        return out[0]  # ac
-
     def forward(self, ob):
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x = self.fc_stack(ob)
-        ac = float(self.max_ac) * torch.tanh(self.a_head(self.a_fc_stack(x)))
-        return [ac]
+        return float(self.max_ac) * torch.tanh(self.a_head(self.a_fc_stack(x)))
 
     @property
     def perturbable_params(self):
@@ -218,9 +213,6 @@ class Critic(nn.Module):
         # perform initialization
         self.fc_stack.apply(init())
         self.head.apply(init())
-
-    def qz(self, ob, ac):
-        return self.forward(ob, ac)
 
     def forward(self, ob, ac):
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)

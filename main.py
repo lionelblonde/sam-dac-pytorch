@@ -38,7 +38,7 @@ def train(args: Namespace):
         device = torch.device("cuda:0")
     else:
         if args.mps:  # TODO(lionel): add this as hp
-            assert torch.has_mps
+            assert torch.mps
             # use Apple"s Metal Performance Shaders (MPS)
             device = torch.device("mps")
         else:
@@ -51,10 +51,10 @@ def train(args: Namespace):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     np_rng = np.random.default_rng(args.seed)
-    eval_seed = args.seed + 1000000
 
     # env
-    env, shapes, max_ac = make_env(args.env_id, args.seed, args.wrap_absorb)
+    env, net_shapes, erb_shapes, max_ac, max_episode_steps = make_env(
+        args.env_id, args.wrap_absorb)
 
     # create an agent wrapper
 
@@ -62,19 +62,19 @@ def train(args: Namespace):
         np_rng=np_rng,
         expert_path=args.expert_path,
         num_demos=args.num_demos,
-        max_ep_steps=env._max_episode_steps,  # careful here when porting to other envs
+        max_ep_steps=max_episode_steps,
         wrap_absorb=args.wrap_absorb,
     )
     replay_buffer = ReplayBuffer(
         np_rng=np_rng,
         capacity=args.mem_size,
-        shapes=shapes,
+        erb_shapes=erb_shapes,
     )
     logger.info(f"{replay_buffer} configured")
 
     def agent_wrapper():
         return SPPAgent(
-            shapes=shapes,
+            net_shapes=net_shapes,
             max_ac=max_ac,
             device=device,
             hps=args,
@@ -83,7 +83,7 @@ def train(args: Namespace):
         )
 
     # create an evaluation environment not to mess up with training rollouts
-    eval_env, _, _ = make_env(args.env_id, eval_seed, args.wrap_absorb)
+    eval_env, _, _, _, _ = make_env(args.env_id, args.wrap_absorb)
 
     # train
     orchestrator.learn(
@@ -117,12 +117,12 @@ def evaluate(args: Namespace):
     torch.cuda.manual_seed_all(args.seed)
 
     # env
-    env, shapes, max_ac = make_env(args.env_id, args.seed, args.wrap_absorb)
+    env, net_shapes, _, max_ac, _ = make_env(args.env_id, args.wrap_absorb)
 
     # create an agent wrapper
     def agent_wrapper():
         return SPPAgent(
-            shapes=shapes,
+            net_shapes=net_shapes,
             max_ac=max_ac,
             device=device,
             hps=args,

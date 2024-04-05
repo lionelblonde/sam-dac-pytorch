@@ -50,17 +50,19 @@ class ExperimentInitializer:
         """Configure the experiment"""
         if self.args.task == "train":
             log_path = Path(self.args.log_dir) / self.get_name()
-            formats_strs = ["stdout", "log", "csv"]
+            formats_strs = ["stdout", "log", "json"]
             logger.info("configuring logger")
             logger.configure(dir_=str(log_path), format_strs=formats_strs)
+
             logger.info("logger configured")
-            logger.info(f"==directory: {log_path}")
-            logger.info(f"==output formats: {formats_strs}")
+            logger.info(f"::directory: {log_path}")
+            logger.info(f"::output formats: {formats_strs}")
+
             # in the same log folder, log args in a YAML file
             config_dumper = ConfigDumper(args=self.args, path=str(log_path))
             config_dumper.dump()
             logger.info("experiment configured")
-        elif self.args.task == "eval":
+        elif self.args.task == "evaluate":
             logger.info("configuring logger for evaluation")
             logger.configure(dir_=None, format_strs=["stdout"])
         else:
@@ -84,13 +86,12 @@ class ExperimentInitializer:
             pass
 
         name += f".{self.args.env_id}"
-        name += f".{self.args.algo}"
         name += f".seed{str(self.args.seed).zfill(2)}"
 
         if self.args.task == "train":
-            name += f".train=demos{str(self.args.num_demos).zfill(3)}"
+            name += f".train_demos{str(self.args.num_demos).zfill(3)}"
         elif self.args.task == "evaluate":
-            name += f".eval=trajs{str(self.args.num_trajs).zfill(2)}"
+            name += f".eval_trajs{str(self.args.num_trajs).zfill(2)}"
         else:
             raise ValueError(f"invalid task {self.args.task}")
 

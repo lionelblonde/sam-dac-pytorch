@@ -12,7 +12,7 @@ from torch import autograd
 
 from helpers import logger
 from helpers.normalizer import RunningMoments
-from helpers.dataset import Dataset, DemoDataset
+from helpers.dataset import DictDataset, DemoDataset
 from helpers.math_util import huber_quant_reg_loss
 from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.param_noise import AdaptiveParamNoise
@@ -23,14 +23,14 @@ from agents.memory import ReplayBuffer
 class SPPAgent(object):
 
     def __init__(self,
-                 shapes: dict,
+                 net_shapes: dict,
                  max_ac: float,
                  device: torch.device,
                  hps: Namespace,
                  expert_dataset: Optional[DemoDataset],
                  replay_buffer: Optional[ReplayBuffer]):
 
-        self.ob_shape, self.ac_shape = shapes["ob_shape"], shapes["ac_shape"]
+        self.ob_shape, self.ac_shape = net_shapes["ob_shape"], net_shapes["ac_shape"]
         self.max_ac = max_ac
 
         self.device = device
@@ -87,7 +87,7 @@ class SPPAgent(object):
         assert not (self.hps.use_qr and self.hps.ret_norm)
         if self.hps.ret_norm:
             # create return normalizer that maintains running statistics
-            self.rms_ret = RunningMoments(shape=(1,), device=self.device)  # or shapes["rews"]
+            self.rms_ret = RunningMoments(shape=(1,), device=self.device)
 
         # create online and target nets
         net_args = [self.ob_shape, self.ac_shape, self.hps, self.rms_obs, self.max_ac]
@@ -245,14 +245,17 @@ class SPPAgent(object):
 
         # create tensor from the state (`require_grad=False` by default)
         ob = torch.Tensor(ob[None]).to(self.device)
+
         if apply_noise and self.param_noise is not None:
             # predict following a parameter-noise-perturbed actor
-            ac = self.pnp_actr.act(ob)
+            ac = self.pnp_actr(ob)
         else:
             # predict following the non-perturbed actor
-            ac = self.actr.act(ob)
+            ac = self.actr(ob)
+
         # place on cpu and collapse into one dimension
         ac = ac.cpu().detach().numpy().flatten()
+
         if apply_noise and self.ac_noise is not None:
             # apply additive action noise once the action has been predicted,
             # in combination with parameter noise, or not.
@@ -278,11 +281,11 @@ class SPPAgent(object):
         if self.hps.use_c51:
 
             # compute qz estimate
-            z = self.crit.qz(state, action).unsqueeze(-1)
+            z = self.crit(state, action).unsqueeze(-1)
             z.data.clamp_(0.01, 0.99)
 
             # compute target qz estimate
-            z_prime = self.targ_crit.qz(next_state, next_action)
+            z_prime = self.targ_crit(next_state, next_action)
             z_prime.data.clamp_(0.01, 0.99)
 
             gamma_mask = ((self.hps.gamma ** td_len) * (1 - done))
@@ -306,17 +309,17 @@ class SPPAgent(object):
             crit_loss = ce_losses.mean()
 
             # actor loss
-            actr_loss = -self.crit.qz(state, self.actr.act(state))  # [batch_size, num_atoms]
+            actr_loss = -self.crit(state, self.actr(state))  # [batch_size, num_atoms]
             actr_loss = actr_loss.matmul(self.c51_supp).unsqueeze(-1)  # [batch_size, 1]
             actr_loss = actr_loss.mean()
 
         elif self.hps.use_qr:
 
             # compute qz estimate
-            z = self.crit.qz(state, action).unsqueeze(-1)
+            z = self.crit(state, action).unsqueeze(-1)
 
             # compute target qz estimate
-            z_prime = self.targ_crit.qz(next_state, next_action)
+            z_prime = self.targ_crit(next_state, next_action)
 
             # reshape rewards to be of shape [batch_size x num_tau, 1]
             reward = reward.repeat(self.hps.num_tau, 1)
@@ -348,17 +351,17 @@ class SPPAgent(object):
             crit_loss = crit_loss.mean()
 
             # actor loss
-            actr_loss = -self.crit.qz(state, self.actr.act(state))
+            actr_loss = -self.crit(state, self.actr(state))
 
         else:
 
             # compute qz estimates
-            q = self.denorm_rets(self.crit.qz(state, action))
-            twin_q = self.denorm_rets(self.twin.qz(state, action))
+            q = self.denorm_rets(self.crit(state, action))
+            twin_q = self.denorm_rets(self.twin(state, action))
 
             # compute target qz estimate and same for twin
-            q_prime = self.targ_crit.qz(next_state, next_action)
-            twin_q_prime = self.targ_twin.qz(next_state, next_action)
+            q_prime = self.targ_crit(next_state, next_action)
+            twin_q_prime = self.targ_twin(next_state, next_action)
             q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +
                        0.25 * torch.max(q_prime, twin_q_prime))  # soft minimum from BCQ
             targ_q = (reward +
@@ -395,7 +398,7 @@ class SPPAgent(object):
             twin_loss = ff.smooth_l1_loss(twin_q, targ_q)  # overwrites the None initially set
 
             # actor loss
-            actr_loss = -self.crit.qz(state, self.actr.act(state))
+            actr_loss = -self.crit(state, self.actr(state)).mean()
 
         return actr_loss, crit_loss, twin_loss
 
@@ -436,14 +439,34 @@ class SPPAgent(object):
         if self.hps.targ_actor_smoothing:
             n_ = action.clone().detach().data.normal_(0., self.hps.td3_std).to(self.device)
             n_ = n_.clamp(-self.hps.td3_c, self.hps.td3_c)
-            next_action = (self.targ_actr.act(next_state) + n_).clamp(-self.max_ac, self.max_ac)
+            next_action = (self.targ_actr(next_state) + n_).clamp(-self.max_ac, self.max_ac)
         else:
-            next_action = self.targ_actr.act(next_state)
+            next_action = self.targ_actr(next_state)
 
         # compute critic and actor losses
         actr_loss, crit_loss, twin_loss = self.compute_losses(
             state, action, next_state, next_action, reward, done, td_len,
         )
+
+        if update_actr:
+
+            # update actor
+            actr_loss.backward()
+            if self.hps.clip_norm > 0:
+                cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
+            self.actr_opt.step()
+            self.actr_opt.zero_grad()
+
+            self.send_to_dash(
+                {"actr_loss": actr_loss},
+                step_metric=self.crit_updates_so_far,
+                glob="train",
+            )
+
+            self.actr_updates_so_far += 1
+
+            # update lr
+            self.actr_sched.step()
 
         # update critic
         crit_loss.backward()
@@ -470,26 +493,6 @@ class SPPAgent(object):
 
         self.crit_updates_so_far += 1
 
-        if update_actr:
-
-            # update actor
-            actr_loss.backward()
-            if self.hps.clip_norm > 0:
-                cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
-            self.actr_opt.step()
-            self.actr_opt.zero_grad()
-
-            self.send_to_dash(
-                {"actr_loss": actr_loss},
-                step_metric=self.crit_updates_so_far,
-                glob="train",
-            )
-
-            self.actr_updates_so_far += 1
-
-            # update lr
-            self.actr_sched.step()
-
         # update target nets
         self.update_target_net()
 
@@ -508,9 +511,9 @@ class SPPAgent(object):
                 d_keys.append("obs1")
         else:
             d_keys.append("acs")
+        d_dataset = DictDataset({k: batch[k] for k in d_keys})  # own dataset class
 
-        d_dataset = Dataset({k: batch[k] for k in d_keys})
-        d_dataloader = DataLoader(
+        d_dataloader = DataLoader(  # native dataloader
             d_dataset,
             self.e_batch_size,
             shuffle=True,
@@ -672,16 +675,22 @@ class SPPAgent(object):
 
         if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
             # if non-distributional, targets slowly track their non-target counterparts
-            for param, targ_param in zip(self.actr.parameters(), self.targ_actr.parameters()):
+            for param, targ_param in zip(self.actr.parameters(),
+                                         self.targ_actr.parameters()):
                 targ_param.data.copy_(
-                    self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
-            for param, targ_param in zip(self.crit.parameters(), self.targ_crit.parameters()):
+                    self.hps.polyak * param.data +
+                        (1. - self.hps.polyak) * targ_param.data)
+            for param, targ_param in zip(self.crit.parameters(),
+                                         self.targ_crit.parameters()):
                 targ_param.data.copy_(
-                    self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
+                    self.hps.polyak * param.data +
+                        (1. - self.hps.polyak) * targ_param.data)
             if self.hps.clipped_double:
-                for param, targ_param in zip(self.twin.parameters(), self.targ_twin.parameters()):
+                for param, targ_param in zip(self.twin.parameters(),
+                                             self.targ_twin.parameters()):
                     targ_param.data.copy_(
-                        self.hps.polyak * param.data + (1. - self.hps.polyak) * targ_param.data)
+                        self.hps.polyak * param.data +
+                            (1. - self.hps.polyak) * targ_param.data)
         elif self.crit_updates_so_far % self.hps.targ_up_freq == 0:
             # distributional case: periodically set target weights with online models
             self.targ_actr.load_state_dict(self.actr.state_dict())
@@ -712,13 +721,14 @@ class SPPAgent(object):
             param = self.actr.state_dict()[p].clone()
             self.apnp_actr.state_dict()[p].data.copy_(param.data)
 
-        # compute distance between actor and adaptive-parameter-noise-perturbed actor predictions
+        # compute distance between actor and perturbed actor predictions
         if self.hps.wrap_absorb:
             state = self.remove_absorbing(state)[0][:, 0:-1]
-        self.pn_dist = torch.sqrt(ff.mse_loss(self.actr.act(state), self.apnp_actr.act(state)))
-        self.pn_dist = self.pn_dist.cpu().data.numpy()
+        self.pn_dist = torch.sqrt(ff.mse_loss(self.actr(state), self.apnp_actr(state)))
 
-        # adapt the parameter noise
+        # self.pn_dist = self.pn_dist.cpu().data.numpy()  # TODO(lionel): remove this
+
+        # adapt the parameter noise with the computed distance
         self.param_noise.adapt_std(self.pn_dist)
 
     def reset_noise(self):

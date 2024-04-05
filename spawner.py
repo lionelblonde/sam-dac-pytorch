@@ -89,6 +89,7 @@ class Spawner(object):
         self.bool_args = [
             "cuda",
             "f16",
+            "mps",
             "render",
             "record",
             "layer_norm",

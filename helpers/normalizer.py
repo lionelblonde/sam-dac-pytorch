@@ -7,14 +7,14 @@ class RunningMoments(object):
         """Maintain running statistics across workers leveraging Chan's method"""
         self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)
-        kwargs = {"shape": shape, "dtype": torch.float64, "device": device}
-        self.mean, self.std = torch.zeros(**kwargs), torch.ones(**kwargs)
+        self.mean = torch.zeros(shape, dtype=torch.float32, device=device)
+        self.std = torch.ones(shape, dtype=torch.float32, device=device)
         self.device = device
 
     def update(self, x):
         """Update running statistics using the new batch's statistics"""
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
-        self.update_moments(x.double().mean(dim=0), x.double().std(dim=0), x.size(0))
+        self.update_moments(x.mean(dim=0), x.std(dim=0), x.size(0))
 
     def update_moments(self,
                        batch_mean: torch.Tensor,
@@ -37,7 +37,7 @@ class RunningMoments(object):
         new_count = tot_count
         # update moments
         self.mean = new_mean
-        min_var = torch.Tensor(1e-2).double()
+        min_var = torch.tensor(1e-2)  # reminder: to create tensor from data: tensor not Tensor
         self.std = torch.maximum(new_var, min_var).sqrt()
         assert self.mean.device == self.device and self.std.device == self.device, "device issue"
         self.count = new_count
@@ -58,6 +58,4 @@ class RunningMoments(object):
         self.__dict__.update(state_dict)
 
     def state_dict(self):
-        _state_dict = self.__dict__.copy()
-        _state_dict.pop("comm")
-        return _state_dict
+        return self.__dict__.copy()
