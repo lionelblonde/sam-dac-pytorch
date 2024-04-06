@@ -4,9 +4,12 @@ import hashlib
 import time
 import cv2
 import numpy as np
+import numpy.typing as npt
+
+from helpers import logger
 
 
-def record_video(save_dir, index, obs):
+def record_video(save_dir: str, name: str, obs: npt.NDArray):
     """Record a video from samples collected at evalutation time."""
     # unstack the frames if stacked, while leaving colors unaltered
     frames = np.split(obs, 1, axis=-1)
@@ -15,14 +18,17 @@ def record_video(save_dir, index, obs):
               for a in np.split(frames, frames.shape[0], axis=0)]
 
     # create OpenCV video writer
-    vname = "render-{}".format(index)
+    vname = f"render-{name}"
     frame_size = (obs.shape[-2],
                  obs.shape[-3])
-    writer = cv2.VideoWriter(filename=f"{Path(save_dir) / vname}.mp4",
-                             fourcc=cv2.VideoWriter_fourcc(*"mp4v"),
-                             fps=25,
-                             frameSize=frame_size,
-                             isColor=True)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        filename=f"{Path(save_dir) / vname}.mp4",
+        fourcc=fourcc,
+        fps=25,
+        frameSize=frame_size,
+        isColor=True,
+    )
 
     for frame in frames:
         # add frame to video
@@ -31,6 +37,8 @@ def record_video(save_dir, index, obs):
     cv2.destroyAllWindows()
     # delete the object
     del frames
+
+    logger.info(f"video::{vname}::dumped")
 
 
 class OpenCVImageViewer(object):

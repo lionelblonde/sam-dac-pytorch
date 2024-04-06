@@ -54,7 +54,7 @@ def train(args: Namespace):
 
     # env
     env, net_shapes, erb_shapes, max_ac, max_episode_steps = make_env(
-        args.env_id, args.wrap_absorb)
+        args.env_id, args.wrap_absorb, record=False, render=args.render)
 
     # create an agent wrapper
 
@@ -83,7 +83,8 @@ def train(args: Namespace):
         )
 
     # create an evaluation environment not to mess up with training rollouts
-    eval_env, _, _, _, _ = make_env(args.env_id, args.wrap_absorb)
+    eval_env, _, _, _, _ = make_env(
+        args.env_id, args.wrap_absorb, record=args.record, render=args.render)
 
     # train
     orchestrator.learn(
@@ -117,7 +118,8 @@ def evaluate(args: Namespace):
     torch.cuda.manual_seed_all(args.seed)
 
     # env
-    env, net_shapes, _, max_ac, _ = make_env(args.env_id, args.wrap_absorb)
+    env, net_shapes, _, max_ac, _ = make_env(
+        args.env_id, args.wrap_absorb, record=args.record, render=args.render)
 
     # create an agent wrapper
     def agent_wrapper():

@@ -22,7 +22,7 @@ def get_benchmark(env_id):
     return benchmark
 
 
-def make_env(env_id, wrap_absorb):
+def make_env(env_id, wrap_absorb, record, render):
     # create an environment
     bench = get_benchmark(env_id)  # at this point benchmark is valid
 
@@ -36,16 +36,23 @@ def make_env(env_id, wrap_absorb):
         except OSError:
             pass
 
-        return make_farama_mujoco_env(env_id, wrap_absorb)
+        return make_farama_mujoco_env(env_id, wrap_absorb, record, render)
     raise ValueError(f"invalid benchmark: {bench}")
 
 
-def make_farama_mujoco_env(env_id, wrap_absorb):  # not ideal for code golf, but clearer for debug
+def make_farama_mujoco_env(env_id, wrap_absorb, record, render):
+    # not ideal for code golf, but clearer for debug
 
-    # create env and seed it
-    env = gym.make(env_id)
+    # create env
     # normally the windowed one is "human" .other option for later: "rgb_array", but prefer:
     # the following: `from gymnasium.wrappers.pixel_observation import PixelObservationWrapper`
+    if record:  # overwrites render
+        env = gym.make(env_id, render_mode="rgb_array_list")
+    elif render:
+        env = gym.make(env_id, render_mode="human")
+    else:
+        env = gym.make(env_id)
+    # reference: https://younis.dev/blog/render-api/
 
     # build shapes for nets and replay buffer
     net_shapes = {}

@@ -123,7 +123,10 @@ def episode(env, agent, seed):
     # generator that spits out a trajectory collected during a single episode
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
-    ob, _ = env.reset(seed=seed)
+
+    # ob, _ = env.reset(seed=seed)
+    rng = np.random.default_rng()
+    ob, _ = env.reset(seed=seed + rng.integers(10000, size=1).item())  # TODO(lionel): do this
     ob = np.array(ob)
 
     cur_ep_len = 0
@@ -168,7 +171,8 @@ def episode(env, agent, seed):
             obs = []
             acs = []
             env_rews = []
-            ob, _ = env.reset(seed=seed)
+            # ob, _ = env.reset(seed=seed)
+            ob, _ = env.reset(seed=seed + rng.integers(10000, size=1).item())
             ob = np.array(ob)
 
 
@@ -176,7 +180,7 @@ def evaluate(args, env, agent_wrapper, experiment_name):
 
     vid_dir = Path(args.video_dir) / experiment_name
     if args.record:
-        vid_dir.mkdir(vid_dir, exist_ok=True)
+        vid_dir.mkdir(parents=True, exist_ok=True)
 
     # create an agent
     agent = agent_wrapper()
@@ -204,7 +208,8 @@ def evaluate(args, env, agent_wrapper, experiment_name):
 
         if args.record:
             # record a video of the episode
-            record_video(vid_dir, i, traj["obs"])
+            frame_collection = env.render()  # ref: https://younis.dev/blog/render-api/
+            record_video(vid_dir, i, np.array(frame_collection))
 
     eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
 
@@ -227,6 +232,10 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
     # set up model save directory
     ckpt_dir = Path(args.checkpoint_dir) / experiment_name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    vid_dir = Path(args.video_dir) / experiment_name
+    if args.record:
+        vid_dir.mkdir(parents=True, exist_ok=True)
 
     # save the model as a dry run, to avoid bad surprises at the end
     agent.save_to_path(ckpt_dir, xtra="dryrun")
@@ -309,13 +318,13 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
 
         i += 1
 
-        if agent.actr_updates_so_far % args.eval_every == 0:
+        if i % args.eval_every == 0:
 
             with timed("evaluating"):
 
                 len_buff, env_ret_buff = [], []
 
-                for _ in range(args.eval_steps_per_iter):
+                for j in range(args.eval_steps_per_iter):
 
                     # sample an episode with non-perturbed actor
                     ep = next(ep_gen)
@@ -323,6 +332,12 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
 
                     len_buff.append(ep["ep_len"])
                     env_ret_buff.append(ep["ep_env_ret"])
+
+                    if args.record:
+                        # record a video of the episode
+                        # ref: https://younis.dev/blog/render-api/
+                        frame_collection = eval_env.render()
+                        record_video(vid_dir, f"iter{i}-ep{j}", np.array(frame_collection))
 
                 eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
 
