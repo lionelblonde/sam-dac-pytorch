@@ -1,4 +1,5 @@
 import sys
+import io
 from pathlib import Path
 import tempfile
 import json
@@ -29,116 +30,135 @@ class SeqWriter(object):
 
 class HumanOutputFormat(KVWriter, SeqWriter):
 
-    def __init__(self, path_or_textiofilething):
-        self.file = path_or_textiofilething
-        if isinstance(path_or_textiofilething, Path):
-            self.write_fn = self.file.write_text
+    def __init__(self, path_or_io):
+        assert isinstance(path_or_io, (io.TextIOWrapper, Path))
+
+        if isinstance(path_or_io, Path):
+            self.file = path_or_io.open("wt")
             self.own_file = True
-        else:  # must be a textiofilething or assert error
-            assert_msg = (
-                f"invalid type, got {type(self.file)};"
-                "must at least have a `write` method"
-            )
-            assert hasattr(self.file, "write"), assert_msg
-            self.write_fn = self.file.write
+        else:
+            fmtstr = f"expected file or str, got {path_or_io}"
+            assert hasattr(path_or_io, "read"), fmtstr
+            self.file = path_or_io
             self.own_file = False
 
     def writekvs(self, kvs):
-        # Create strings for printing
+        # create strings for printing
         key2str = {}
         for (key, val) in kvs.items():
             valstr = f"{val:<8.3g}" if isinstance(val, float) else str(val)
-            key2str[self._truncate(key)] = self._truncate(valstr)
+            key2str[self.truncate(key)] = self.truncate(valstr)
 
-        # Find max widths
+        # find max widths
         if len(key2str) == 0:
             # empty key-value dict; not sending warning nor stopping
+            log("WARNING: tried to write empty key-value dict")
             return
         keywidth = max(map(len, key2str.keys()))
         valwidth = max(map(len, key2str.values()))
 
-        # Write out the data
+        # write out the data
         dashes = "-" * (keywidth + valwidth + 7)
         lines = [dashes]
         for (key, val) in key2str.items():
-            key_space = " " * (keywidth - len(key))
-            val_space = " " * (valwidth - len(val))
-            lines.append(f"| {key}{key_space} | {val}{val_space} |")
+            key_padding = " " * (keywidth - len(key))
+            val_padding = " " * (valwidth - len(val))
+            lines.append(f"| {key}{key_padding} | {val}{val_padding} |")
         lines.append(dashes)
-        self.write_fn("\n".join(lines) + "\n")
+        self.file.write("\n".join(lines) + "\n")
+
+        # flush the output to the file
+        self.file.flush()
 
     @staticmethod
-    def _truncate(s):
-        thres_len = 43
-        return s[:40] + "..." if len(s) > thres_len else s
+    def truncate(s):
+        thres = 43
+        return s[:40] + "..." if len(s) > thres else s
 
     def writeseq(self, seq):
         for arg in seq:
-            self.write_fn(arg)
-        self.write_fn("\n")
+            self.file.write(arg)
+        self.file.write("\n")
+        self.file.flush()
+
+    def close(self):
+        if self.own_file:
+            self.file.close()
 
 
 class JSONOutputFormat(KVWriter):
 
-    def __init__(self, path):
-        self.file = path
+    def __init__(self, filename):
+        assert isinstance(filename, Path)
+        self.file = filename.open("wt")
 
     def writekvs(self, kvs):
         for k, v in kvs.items():
             if hasattr(v, "dtype"):
-                kvs[k] = float(v.tolist())
-        self.file.write_text(json.dumps(kvs), newline="\n")
+                v_ = v.tolist()
+                kvs[k] = float(v_)
+        self.file.write(json.dumps(kvs) + "\n")
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
 
 
 class CSVOutputFormat(KVWriter):
 
-    def __init__(self, path):
-        self.file = path
+    def __init__(self, filename):
+        assert isinstance(filename, Path)
+        self.file = filename.open("w+t")
         self.keys = []
         self.sep = ","
 
     def writekvs(self, kvs):
-        # Add our current row to the history
+        # add our current row to the history
         extra_keys = kvs.keys() - self.keys
         if extra_keys:
             self.keys.extend(extra_keys)
-            with self.file.open() as f:
-                lines = f.readlines()
+            self.file.seek(0)
+            lines = self.file.readlines()
+            self.file.seek(0)
             for (i, k) in enumerate(self.keys):
                 if i > 0:
-                    self.file.write_text(",")
-                self.file.write_text(k)
+                    self.file.write(",")
+                self.file.write(k)
             self.file.write("\n")
             for line in lines[1:]:
-                self.file.write_text(line[:-1])
-                self.file.write_text(self.sep * len(extra_keys))
-                self.file.write_text("", newline="\n")
+                self.file.write(line[:-1])
+                self.file.write(self.sep * len(extra_keys))
+                self.file.write("\n")
         for (i, k) in enumerate(self.keys):
             if i > 0:
-                self.file.write_text(",")
+                self.file.write(",")
             v = kvs.get(k)
             if v:
-                self.file.write_text(str(v))
-        self.file.write_text("", newline="\n")
+                self.file.write(str(v))
+        self.file.write("\n")
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
 
 
-def make_output_format(formatting, dir_, suffix=""):
-    dir_ = Path(dir_)
-    dir_.mkdir(parents=True, exist_ok=True)
+def make_output_format(formatting: str, directory: Path, suffix: str = ""):
+    assert isinstance(directory, Path)
+    directory.mkdir(parents=True, exist_ok=True)
     match formatting:  # python version >3.10 needed
         case "stdout":
             return HumanOutputFormat(sys.stdout)
         case "log":
-            return HumanOutputFormat(dir_ / f"log{suffix}.txt")
+            return HumanOutputFormat(directory / f"log{suffix}.txt")
         case "json":
-            return JSONOutputFormat(dir_ / f"progress{suffix}.json")
+            return JSONOutputFormat(directory / f"progress{suffix}.json")
         case "csv":
-            return CSVOutputFormat(dir_ / f"progress{suffix}.csv")
+            return CSVOutputFormat(directory / f"progress{suffix}.csv")
         case _:
             raise ValueError(f"unknown formatting specified: {formatting}")
 
 
-# Frontend
+# frontend
 
 def logkv(key, val):
     """Log a key-value pair with the current logger.
@@ -177,7 +197,7 @@ def log(*args, level=INFO):
         Logger.CURRENT.log(*args, level=level)
 
 
-# Create distinct functions fixed at all the values taken by `level`
+# create distinct functions fixed at all the values taken by `level`
 
 def debug(*args):
     log(*args, level=DEBUG)
@@ -208,22 +228,22 @@ def get_dir():
     return None
 
 
-# Define aliases for higher-level language
+# define aliases for higher-level language
 record_tabular = logkv
 dump_tabular = dumpkvs
 
 
-# Backend
+# backend
 
 class Logger(object):
 
     DEFAULT: Optional[Any] = None
     CURRENT: Optional[Any] = None
 
-    def __init__(self, dir_, output_formats):
+    def __init__(self, directory, output_formats):
         self.name2val = OrderedDict()  # values this iteration
         self.level = INFO
-        self.dir_ = dir_
+        self.directory = directory
         self.output_formats = output_formats
 
     def logkv(self, key, val):
@@ -239,7 +259,7 @@ class Logger(object):
 
     def log(self, *args, level=INFO):
         if self.level <= level:
-            # If the current logger level is higher than
+            # if the current logger level is higher than
             # the `level` argument, don"t print to stdout
             self._log(args)
 
@@ -247,7 +267,7 @@ class Logger(object):
         self.level = level
 
     def get_dir(self):
-        return self.dir_
+        return self.directory
 
     def _log(self, args):
         for output_format in self.output_formats:
@@ -255,33 +275,32 @@ class Logger(object):
                 output_format.writeseq(map(str, args))
 
 
-def configure(dir_=None, format_strs=None):
+def configure(directory=None, format_strs=None):
     """Configure logger (called in configure_default_logger)"""
-    if dir_ is None:
-        dir_ = Path(tempfile.gettempdir())
-        dir_ /= datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+    if directory is None:
+        directory = Path(tempfile.gettempdir())
+        directory /= datetime.datetime.now(tz=datetime.timezone.utc).strftime(
             "%Y-%m-%d-%H-%M-%S-%f_temp_log")
     else:
-        # make sure the directory is provided as a string
-        assert isinstance(dir_, str), f"wrong type: {type(dir_)} > must be str"
+        assert isinstance(directory, Path)
         # make sure the provided directory exists
-        Path(dir_).mkdir(parents=True, exist_ok=True)
+        Path(directory).mkdir(parents=True, exist_ok=True)
     if format_strs is None:
         format_strs = []
     # setup the output formats
-    output_formats = [make_output_format(f, dir_) for f in format_strs]
-    Logger.CURRENT = Logger(dir_=dir_, output_formats=output_formats)
+    output_formats = [make_output_format(f, directory) for f in format_strs]
+    Logger.CURRENT = Logger(directory=directory, output_formats=output_formats)
 
 
 def configure_default_logger():
     """Configure default logger"""
-    # Write to stdout by default
+    # write to stdout by default
     format_strs = ["stdout"]
-    # Configure the current logger
+    # configure the current logger
     configure(format_strs=format_strs)  # makes Logger.CURRENT be not None anymore
-    # Logging successful configuration of default logger
+    # logging successful configuration of default logger
     log("configuring default logger (logging to stdout only by default)")
-    # Define the default logger with the current logger
+    # define the default logger with the current logger
     Logger.DEFAULT = Logger.CURRENT
 
 
@@ -291,5 +310,5 @@ def reset():
         log("resetting logger")
 
 
-# Configure a logger by default
+# configure a logger by default
 configure_default_logger()

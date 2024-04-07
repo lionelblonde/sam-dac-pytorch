@@ -50,9 +50,9 @@ class ExperimentInitializer:
         """Configure the experiment"""
         if self.args.task == "train":
             log_path = Path(self.args.log_dir) / self.get_name()
-            formats_strs = ["stdout", "log", "json"]
+            formats_strs = ["stdout", "log", "json", "csv"]
             logger.info("configuring logger")
-            logger.configure(dir_=str(log_path), format_strs=formats_strs)
+            logger.configure(directory=log_path, format_strs=formats_strs)
 
             logger.info("logger configured")
             logger.info(f"::directory: {log_path}")
@@ -64,7 +64,7 @@ class ExperimentInitializer:
             logger.info("experiment configured")
         elif self.args.task == "evaluate":
             logger.info("configuring logger for evaluation")
-            logger.configure(dir_=None, format_strs=["stdout"])
+            logger.configure(directory=None, format_strs=["stdout"])
         else:
             raise ValueError(f"invalid task {self.args.task}")
 

@@ -2,9 +2,9 @@ import sys
 from pathlib import Path
 import hashlib
 import time
-import cv2
 import numpy as np
 import numpy.typing as npt
+import cv2
 
 from helpers import logger
 
