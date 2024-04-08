@@ -151,7 +151,8 @@ class Spawner(object):
         gitsha = ""
         try:
             out = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"])
-            gitsha = "gitSHA_{}".format(out.strip().decode("ascii"))
+            sha = out.strip().decode("ascii")
+            gitsha = f"gitSHA_{sha}"
         except OSError:
             pass
 
@@ -371,7 +372,7 @@ def run(args: argparse.Namespace):
     # create a spawner object
     spawner = Spawner(args)
 
-    # Create directory for spawned jobs
+    # create directory for spawned jobs
     root = Path(__file__).resolve().parent
     spawn_dir = Path(root) / "spawn"
     Path(spawn_dir).mkdir(exist_ok=True)
@@ -388,7 +389,7 @@ def run(args: argparse.Namespace):
         hpmaps = spawner.get_hps()
 
     # create associated task strings
-    commands = ["python main.py \\\n{}".format(spawner.unroll_options(hpmap)) for hpmap in hpmaps]
+    commands = [f"python main.py \\\n{spawner.unroll_options(hpmap)}" for hpmap in hpmaps]
     if not len(commands) == len(set(commands)):
         # terminate in case of duplicate experiment (extremely unlikely though)
         raise ValueError("bad luck, there are dupes -> Try again (:")

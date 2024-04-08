@@ -76,7 +76,7 @@ def plot(args, dest_dir, ycolkey, barplot):
     logger.info(f"pulling logs from sub-directories: {dirs}")
     dirs.sort()
     dnames = deepcopy(dirs)
-    dirs = ["{}/{}".format(args.dir, d) for d in dirs]
+    dirs = [f"{args.dir}/{d}" for d in dirs]
     logger.info(dirs)
 
     # colors
@@ -96,9 +96,11 @@ def plot(args, dest_dir, ycolkey, barplot):
             env = experiment_name.split(".")[_i]
             experiment_map[env].append(key)
             # load data from the CSV file
-            data = pd.read_csv(fname,
-                               skipinitialspace=True,
-                               usecols=[args.xcolkey, ycolkey])
+            data = pd.read_csv(
+                fname,
+                skipinitialspace=True,
+                index_col=[args.xcolkey, ycolkey],  # was using `usecols` before (!?)
+            )
             data.fillna(0.0, inplace=True)
             # retrieve the desired columns from the data
             xcol = data[args.xcolkey].to_numpy()
@@ -138,7 +140,7 @@ def plot(args, dest_dir, ycolkey, barplot):
                         ms=18,
                         ls="",
                         color=palette["curves"][i],
-                        label="{:s}".format(texts[i]))[0]
+                        label=f"{texts[i]}")[0]
                for i in range(len(texts))]
 
     # calculate the x axis upper bound

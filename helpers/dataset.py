@@ -174,7 +174,7 @@ class DemoDataset(DictDataset):
         self.stats = self.np_stats
         self.data = self.np_data
 
-        logger.info("[DEMO DATASET]::keys extracted: {}".format(list(self.data.keys())))
+        logger.info(f"[DEMO DATASET]::keys extracted: {list(self.data.keys())}")
         lens, rets = self.stats["ep_len"], self.stats["ep_ret"]
         logger.info(f"[DEMO DATASET]::got {len(self)} transitions, from {self.num_demos} eps")
         logger.info(f"[DEMO DATASET]::episodic length: {np.mean(lens)}({np.std(lens)})")

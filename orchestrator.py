@@ -259,7 +259,7 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
             break
         except CommError:
             pause = 10
-            logger.info("wandb co error. Retrying in {} secs.".format(pause))
+            logger.info(f"wandb co error. Retrying in {pause} secs.")
             time.sleep(pause)
     logger.info("wandb co established!")
 
