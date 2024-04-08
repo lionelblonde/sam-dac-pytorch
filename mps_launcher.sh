@@ -6,10 +6,10 @@ python main.py \
     --seed 0 \
     --no-cuda \
     --no-fp16 \
-    --no-mps \
+    --mps \
     --no-render \
     --no-record \
-    --task train \
+    --task "train" \
     --num_timesteps 10000000 \
     --training_steps_per_iter 4 \
     --eval_steps_per_iter 10 \

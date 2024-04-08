@@ -90,7 +90,6 @@ class Spawner(object):
             "cuda",
             "f16",
             "mps",
-            "render",
             "record",
             "layer_norm",
             "n_step_returns",
@@ -199,9 +198,8 @@ class Spawner(object):
             "uuid": uuid,
             "cuda": self.config["cuda"],
             "fp16": self.config["fp16"],
-            "render": False,
-            "record": self.config["logging"].get("record", False),
-            "task": self.config["meta"]["task"],
+            "record": self.config.get("record", False),
+            "task": self.config["task"],
 
             # training
             "num_timesteps": int(float(self.config.get("num_timesteps", 2e7))),

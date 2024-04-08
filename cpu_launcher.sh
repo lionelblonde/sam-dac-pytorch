@@ -4,7 +4,7 @@ python main.py \
     --wandb_project ava \
     --env_id Walker2d-v4 \
     --seed 0 \
-    --cuda \
+    --no-cuda \
     --no-fp16 \
     --no-mps \
     --no-render \
@@ -33,7 +33,7 @@ python main.py \
     --lookahead 5 \
     --no-ret_norm \
     --no-popart \
-    --expert_path "/home/lionel/Datasets/expert_demonstrations_openai_mujoco_h5/Walker2d-v4" \
+    --expert_path "/Users/lionelblonde/Datasets/mujoco-experts/Walker2d-v4" \
     --num_demos 4 \
     --g_steps 3 \
     --d_steps 1 \

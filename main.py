@@ -40,7 +40,7 @@ def train(args: Namespace):
         if args.mps:  # TODO(lionel): add this as hp
             assert torch.mps
             # use Apple"s Metal Performance Shaders (MPS)
-            device = torch.device("mps")
+            device = torch.device("mps:0")
         else:
             # default case: just use plain old cpu, no cuda or m-chip gpu
             device = torch.device("cpu")
