@@ -127,7 +127,7 @@ class DemoDataset(DictDataset):
                             axis=0)],
                         axis=-1,
                     )
-                    # Add absorbing transition
+                    # add absorbing transition
                     obs0 = np.concatenate([
                         obs0,
                         np.expand_dims(np.append(np.zeros_like(tmp["obs0"][-1]), 1), axis=0),

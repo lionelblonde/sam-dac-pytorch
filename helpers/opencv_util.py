@@ -46,10 +46,10 @@ class OpenCVImageViewer(object):
 
     def __init__(self, *, q_to_exit=True):
         self._q_to_exit = q_to_exit
-        # Create unique identifier
+        # create unique identifier
         hash_ = hashlib.sha1()
         hash_.update(str(time.time()).encode("utf-8"))
-        # Create window
+        # create window
         self._window_name = str(hash_.hexdigest()[:20])
         cv2.namedWindow(self._window_name, cv2.WINDOW_AUTOSIZE)
         self._isopen = True
@@ -59,9 +59,9 @@ class OpenCVImageViewer(object):
         self._isopen = False
 
     def imshow(self, img):
-        # Convert image to BGR format
+        # convert image to BGR format
         cv2.imshow(self._window_name, img[:, :, [2, 1, 0]])
-        # Listen for escape key, then exit if pressed
+        # listen for escape key, then exit if pressed
         if cv2.waitKey(1) == ord("q") and self._q_to_exit:
             sys.exit()
 
