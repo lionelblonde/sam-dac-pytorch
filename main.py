@@ -1,6 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import fire
 import yaml
@@ -19,7 +20,7 @@ from agents.spp_agent import SPPAgent
 DISABLE_LOGGER = False
 
 
-def uuid(num_syllables=2, num_parts=3):
+def make_uuid(num_syllables=2, num_parts=3):
     """Randomly create a semi-pronounceable uuid"""
     part1 = ["s", "t", "r", "ch", "b", "c", "w", "z", "h", "k", "p", "ph", "sh", "f", "fr"]
     part2 = ["a", "oo", "ee", "e", "u", "er"]
@@ -52,7 +53,14 @@ def get_name(uuid, env_id, seed):
 class MagicRunner(object):
 
     def __init__(self, cfg: str,  # give the relative path to cfg here
-                 env_id: str, seed: int, num_demos: int, expert_path: str):
+                 uuid: Optional[str] = None,
+                 wandb_project: Optional[str] = None,
+                 env_id: Optional[str] = None,
+                 seed: Optional[int] = None,
+                 num_demos: Optional[int] = None,
+                 expert_path: Optional[str] = None,
+                 load_checkpoint: Optional[str] = None):
+
         # retrieve config from filesystem
         proj_root = Path(__file__).resolve().parent
         with (proj_root / Path(cfg)).open() as f:
@@ -63,13 +71,18 @@ class MagicRunner(object):
             new_k = f"{k[:-1]}_dir"
             self._cfg[new_k] = Path(self._cfg["root"]) / k
 
-        # TODO(lionel): solve this
+        # set only if nonexistant key in cfg
+        self._cfg["uuid"] = self._cfg.get("uuid", uuid)  # key exists now, but can be None
+        self._cfg["wandb_project"] = self._cfg.get("wandb_project", wandb_project)
         self._cfg["seed"] = self._cfg.get("seed", seed)
         self._cfg["env_id"] = self._cfg.get("env_id", env_id)
         self._cfg["num_demos"] = self._cfg.get("num_demos", num_demos)
         self._cfg["expert_path"] = self._cfg.get("expert_path", expert_path)
+        self._cfg["load_checkpoint"] = self._cfg.get("load_checkpoint", load_checkpoint)
 
-        self.name = get_name(self._cfg.get("uuid", uuid()), self._cfg["env_id"], self._cfg["seed"])
+        if self._cfg["uuid"] is None:
+            self._cfg["uuid"] = make_uuid()
+        self.name = get_name(self._cfg["uuid"], self._cfg["env_id"], self._cfg["seed"])
 
     def train(self):
 
