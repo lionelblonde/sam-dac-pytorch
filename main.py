@@ -53,13 +53,13 @@ def get_name(uuid, env_id, seed):
 class MagicRunner(object):
 
     def __init__(self, cfg: str,  # give the relative path to cfg here
-                 uuid: Optional[str] = None,
-                 wandb_project: Optional[str] = None,
-                 env_id: Optional[str] = None,
-                 seed: Optional[int] = None,
-                 num_demos: Optional[int] = None,
-                 expert_path: Optional[str] = None,
-                 load_checkpoint: Optional[str] = None):
+                 env_id: str,  # never in cfg: always give one in arg
+                 seed: int,  # never in cfg: always give one in arg
+                 num_demos: int,  # never in cfg: always give one arg
+                 expert_path: str,  # never in cfg: always give one arg
+                 wandb_project: Optional[str] = None,  # is either given in arg (prio) or in cfg
+                 uuid: Optional[str] = None,  # never in cfg, but not forced to give in arg either
+                 load_ckpt: Optional[str] = None):  # same as uuid: from arg or nothing
 
         # retrieve config from filesystem
         proj_root = Path(__file__).resolve().parent
@@ -72,16 +72,27 @@ class MagicRunner(object):
             self._cfg[new_k] = Path(self._cfg["root"]) / k
 
         # set only if nonexistant key in cfg
-        self._cfg["uuid"] = self._cfg.get("uuid", uuid)  # key exists now, but can be None
-        self._cfg["wandb_project"] = self._cfg.get("wandb_project", wandb_project)
-        self._cfg["seed"] = self._cfg.get("seed", seed)
-        self._cfg["env_id"] = self._cfg.get("env_id", env_id)
-        self._cfg["num_demos"] = self._cfg.get("num_demos", num_demos)
-        self._cfg["expert_path"] = self._cfg.get("expert_path", expert_path)
-        self._cfg["load_checkpoint"] = self._cfg.get("load_checkpoint", load_checkpoint)
+        self._cfg["seed"] = seed
+        self._cfg["env_id"] = env_id
+        self._cfg["num_demos"] = num_demos
+        self._cfg["expert_path"] = expert_path
 
-        if self._cfg["uuid"] is None:
-            self._cfg["uuid"] = make_uuid()
+        assert "wandb_project" in self._cfg  # if not in cfg from fs, abort
+        if wandb_project is not None:
+            self._cfg["wandb_project"] = wandb_project  # overwrite cfg
+
+        assert "uuid" not in self._cfg  # uuid should never be in the cfg file
+        if uuid is not None:
+            self._cfg["uuid"] = uuid  # add in cfg
+        else:
+            self._cfg["uuid"] = make_uuid()  # create a uuid
+
+        assert "load_ckpt" not in self._cfg  # load_ckpt should never be in the cfg file
+        if load_ckpt is not None:
+            self._cfg["load_ckpt"] = load_ckpt  # add in cfg
+        else:
+            logger.info("no ckpt to load: key will not exist in cfg")
+
         self.name = get_name(self._cfg["uuid"], self._cfg["env_id"], self._cfg["seed"])
 
     def train(self):

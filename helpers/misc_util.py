@@ -1,18 +1,8 @@
 import time
-import argparse
-from typing import Optional
 from enum import IntEnum
 from contextlib import contextmanager
 
 from helpers import logger
-
-
-def zipsame(*seqs):
-    """Verify that all the sequences in `seqs` are the same length, then zip them together"""
-    assert seqs, "empty input sequence"
-    ref_len = len(seqs[0])
-    assert all(len(seq) == ref_len for seq in seqs[1:])
-    return zip(*seqs)
 
 
 def prettify_time(seconds: int):
@@ -46,17 +36,6 @@ def prettify_time(seconds: int):
 
     # finally, if none of the previous conditions is valid
     return "less than a minute"
-
-
-def boolean_flag(parser: argparse.ArgumentParser,
-                 name: str,
-                 *,
-                 default: Optional[bool] = False,
-                 hint: Optional[str] = None):
-    """Add a boolean flag to argparse parser"""
-    dest = name.replace("-", "_")
-    parser.add_argument("--" + name, action="store_true", default=default, dest=dest, help=hint)
-    parser.add_argument("--no-" + name, action="store_false", dest=dest)
 
 
 class Colors(IntEnum):
