@@ -41,7 +41,7 @@ def rollout(env, agent, seed, rollout_len):
         if truncated and env._elapsed_steps != env._max_episode_steps:
             logger.warn("termination caused by something else than time limit; OO-bounds?")
 
-        if agent.hps.wrap_absorb:
+        if agent.hps["wrap_absorb"]:
             _ob = np.append(ob, 0)
             _ac = np.append(ac, 0)
 
@@ -176,29 +176,31 @@ def episode(env, agent, seed):
             ob = np.array(ob)
 
 
-def evaluate(args, env, agent_wrapper, experiment_name):
+def evaluate(cfg, env, agent_wrapper, name):
 
-    vid_dir = Path(args.video_dir) / experiment_name
-    if args.record:
+    vid_dir = Path(cfg["video_dir"]) / name
+    if cfg["record"]:
         vid_dir.mkdir(parents=True, exist_ok=True)
 
     # create an agent
     agent = agent_wrapper()
 
     # create episode generator
-    ep_gen = episode(env, agent, args.seed)
+    ep_gen = episode(env, agent, cfg["seed"])
 
     # load the model
-    agent.load_from_path(args.model_path, args.iter_num)
-    logger.info(f"model loaded from path:\n {args.model_path}")
+    model_path = cfg["model_path"]
+    agent.load_from_path(model_path)
+    logger.info(f"model loaded from path:\n {model_path}")
 
     # collect trajectories
 
+    num_trajs = cfg["num_trajs"]
     len_buff, env_ret_buff = [], []
 
-    for i in range(args.num_trajs):
+    for i in range(num_trajs):
 
-        logger.info(f"evaluating [{i + 1}/{args.num_trajs}]")
+        logger.info(f"evaluating [{i + 1}/{num_trajs}]")
         traj = next(ep_gen)
         ep_len, ep_env_ret = traj["ep_len"], traj["ep_env_ret"]
 
@@ -206,10 +208,10 @@ def evaluate(args, env, agent_wrapper, experiment_name):
         len_buff.append(ep_len)
         env_ret_buff.append(ep_env_ret)
 
-        if args.record:
+        if cfg["record"]:
             # record a video of the episode
             frame_collection = env.render()  # ref: https://younis.dev/blog/render-api/
-            record_video(vid_dir, i, np.array(frame_collection))
+            record_video(vid_dir, str(i), np.array(frame_collection))
 
     eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
 
@@ -221,7 +223,7 @@ def evaluate(args, env, agent_wrapper, experiment_name):
     logger.dump_tabular()
 
 
-def learn(args, env, eval_env, agent_wrapper, experiment_name):
+def learn(cfg, env, eval_env, agent_wrapper, name):
 
     # create an agent
     agent = agent_wrapper()
@@ -230,11 +232,11 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
     tstart = time.time()
 
     # set up model save directory
-    ckpt_dir = Path(args.checkpoint_dir) / experiment_name
+    ckpt_dir = Path(cfg["checkpoint_dir"]) / name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    vid_dir = Path(args.video_dir) / experiment_name
-    if args.record:
+    vid_dir = Path(cfg["video_dir"]) / name
+    if cfg["record"]:
         vid_dir.mkdir(parents=True, exist_ok=True)
 
     # save the model as a dry run, to avoid bad surprises at the end
@@ -243,18 +245,17 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
 
     # group by everything except the seed, which is last, hence index -1
     # it groups by uuid + gitSHA + env_id + num_demos
-    group = ".".join(experiment_name.split(".")[:-1])
-
+    group = ".".join(name.split(".")[:-1])
     # set up wandb
     while True:
         try:
             wandb.init(
-                project=args.wandb_project,
-                name=experiment_name,
-                id=experiment_name,
+                project=cfg["wandb_project"],
+                name=name,
+                id=name,
                 group=group,
-                config=args.__dict__,
-                dir=args.root,
+                config=cfg,
+                dir=cfg["root"],
             )
             break
         except CommError:
@@ -269,27 +270,27 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
 
     # create rollout generator for training the agent
-    roll_gen = rollout(env, agent, args.seed, args.rollout_len)
+    roll_gen = rollout(env, agent, cfg["seed"], cfg["rollout_len"])
     # create episode generator for evaluating the agent
-    eval_seed = args.seed + 123456  # arbitrary choice
+    eval_seed = cfg["seed"] + 123456  # arbitrary choice
     ep_gen = episode(eval_env, agent, eval_seed)
 
     i = 0
 
-    while agent.timesteps_so_far <= args.num_timesteps:
+    while agent.timesteps_so_far <= cfg["num_timesteps"]:
 
         if i % 100 == 0 or DEBUG:
-            log_iter_info(i, args.num_timesteps // args.rollout_len, tstart)
+            log_iter_info(i, cfg["num_timesteps"] // cfg["rollout_len"], tstart)
 
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned rollout, stored in buffer
-            agent.timesteps_so_far += args.rollout_len
+            agent.timesteps_so_far += cfg["rollout_len"]
 
         with timed("training"):
-            for _ in range(args.training_steps_per_iter):
+            for _ in range(cfg["training_steps_per_iter"]):
 
                 if agent.param_noise is not None:
-                    if agent.actr_updates_so_far % args.pn_adapt_frequency == 0:
+                    if agent.actr_updates_so_far % cfg["pn_adapt_frequency"] == 0:
                         # adapt parameter noise
                         agent.adapt_param_noise()
                         agent.send_to_dash(
@@ -299,18 +300,19 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
                         )  # `pn_dist`: action-space dist between perturbed and non-perturbed
                         # `pn_cur_std`: store the new std resulting from the adaption
 
-                for _ in range(agent.hps.g_steps):
+                for _ in range(agent.hps["g_steps"]):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # determine if updating the actr
-                    update_actr = not bool(agent.crit_updates_so_far % args.actor_update_delay)
+                    update_actr = not bool(
+                        agent.crit_updates_so_far % cfg["actor_update_delay"])
                     # update the actor and critic
                     agent.update_actr_crit(
                         batch=batch,
                         update_actr=update_actr,
                     )  # counters for actr and crit updates are incremented internally!
 
-                for _ in range(agent.hps.d_steps):
+                for _ in range(agent.hps["d_steps"]):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # update the discriminator
@@ -318,13 +320,13 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
 
         i += 1
 
-        if i % args.eval_every == 0:
+        if i % cfg["eval_every"] == 0:
 
             with timed("evaluating"):
 
                 len_buff, env_ret_buff = [], []
 
-                for j in range(args.eval_steps_per_iter):
+                for j in range(cfg["eval_steps_per_iter"]):
 
                     # sample an episode with non-perturbed actor
                     ep = next(ep_gen)
@@ -333,7 +335,7 @@ def learn(args, env, eval_env, agent_wrapper, experiment_name):
                     len_buff.append(ep["ep_len"])
                     env_ret_buff.append(ep["ep_env_ret"])
 
-                    if args.record:
+                    if cfg["record"]:
                         # record a video of the episode
                         # ref: https://younis.dev/blog/render-api/
                         frame_collection = eval_env.render()

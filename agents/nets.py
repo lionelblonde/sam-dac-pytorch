@@ -1,6 +1,5 @@
 from collections import OrderedDict
 from typing import Callable
-from argparse import Namespace
 
 import torch
 from torch import nn
@@ -65,22 +64,22 @@ def snwrap(*, use_sn: bool = False) -> Callable[[nn.Module], nn.Module]:
 class Discriminator(nn.Module):
 
     def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: Namespace, rms_obs: RunningMoments):
+                 hps: dict, rms_obs: RunningMoments):
         super(Discriminator, self).__init__()
+        self.hps = hps
         ob_dim = ob_shape[0]
         ac_dim = ac_shape[0]
-        if hps.wrap_absorb:
+        if self.hps["wrap_absorb"]:
             ob_dim += 1
             ac_dim += 1
-        self.hps = hps
-        if self.hps.d_batch_norm:
+        if self.hps["d_batch_norm"]:
             self.rms_obs = rms_obs
 
-        apply_sn = snwrap(use_sn=self.hps.spectral_norm)  # spectral normalization
+        apply_sn = snwrap(use_sn=self.hps["spectral_norm"])  # spectral normalization
 
         # define the input dimension
         in_dim = ob_dim
-        if self.hps.state_only:
+        if self.hps["state_only"]:
             in_dim += ob_dim
         else:
             in_dim += ac_dim
@@ -102,14 +101,14 @@ class Discriminator(nn.Module):
         self.d_head.apply(init())
 
     def forward(self, input_a, input_b):
-        if self.hps.d_batch_norm:
+        if self.hps["d_batch_norm"]:
             # apply normalization
-            if self.hps.wrap_absorb:
+            if self.hps["wrap_absorb"]:
                 # normalize state
                 input_a_ = input_a.clone()[:, 0:-1]
                 input_a_ = self.rms_obs.standardize(input_a_).clamp(*STANDARDIZED_OB_CLAMPS)
                 input_a = torch.cat([input_a_, input_a[:, -1].unsqueeze(-1)], dim=-1)
-                if self.hps.state_only:
+                if self.hps["state_only"]:
                     # normalize next state
                     input_b_ = input_b.clone()[:, 0:-1]
                     input_b_ = self.rms_obs.standardize(input_b_).clamp(*STANDARDIZED_OB_CLAMPS)
@@ -117,12 +116,12 @@ class Discriminator(nn.Module):
             else:
                 # normalize state
                 input_a = self.rms_obs.standardize(input_a).clamp(*STANDARDIZED_OB_CLAMPS)
-                if self.hps.state_only:
+                if self.hps["state_only"]:
                     # normalize next state
                     input_b = self.rms_obs.standardize(input_b).clamp(*STANDARDIZED_OB_CLAMPS)
         else:
             input_a = input_a.clamp(*STANDARDIZED_OB_CLAMPS)
-            if self.hps.state_only:
+            if self.hps["state_only"]:
                 input_b = input_b.clamp(*STANDARDIZED_OB_CLAMPS)
         # concatenate
         x = torch.cat([input_a, input_b], dim=-1)
@@ -133,11 +132,11 @@ class Discriminator(nn.Module):
 class Actor(nn.Module):
 
     def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: Namespace, rms_obs: RunningMoments, max_ac: float):
+                 hps: dict, rms_obs: RunningMoments, max_ac: float):
         super(Actor, self).__init__()
         ob_dim = ob_shape[0]
         ac_dim = ac_shape[0]
-        self.hps = hps
+        self.layer_norm = hps["layer_norm"]
         self.rms_obs = rms_obs
         self.max_ac = max_ac
 
@@ -145,14 +144,14 @@ class Actor(nn.Module):
         self.fc_stack = nn.Sequential(OrderedDict([
             ("fc_block", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(ob_dim, 300)),
-                ("ln", (nn.LayerNorm if hps.layer_norm else nn.Identity)(300)),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
                 ("nl", nn.Softsign()),
             ]))),
         ]))
         self.a_fc_stack = nn.Sequential(OrderedDict([
             ("fc_block", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(300, 200)),
-                ("ln", (nn.LayerNorm if hps.layer_norm else nn.Identity)(200)),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(200)),
                 ("nl", nn.Softsign()),
             ]))),
         ]))
@@ -180,31 +179,31 @@ class Actor(nn.Module):
 class Critic(nn.Module):
 
     def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: Namespace, rms_obs: RunningMoments):
+                 hps: dict, rms_obs: RunningMoments):
         super(Critic, self).__init__()
         ob_dim = ob_shape[0]
         ac_dim = ac_shape[0]
+        self.use_c51 = hps["use_c51"]
+        self.layer_norm = hps["layer_norm"]
+        self.rms_obs = rms_obs
 
-        if hps.use_c51:
-            num_heads = hps.c51_num_atoms
-        elif hps.use_qr:
-            num_heads = hps.num_tau
+        if self.use_c51:
+            num_heads = hps["c51_num_atoms"]
+        elif hps["use_qr"]:
+            num_heads = hps["num_tau"]
         else:
             num_heads = 1
-
-        self.hps = hps
-        self.rms_obs = rms_obs
 
         # assemble the last layers and output heads
         self.fc_stack = nn.Sequential(OrderedDict([
             ("fc_block_1", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(ob_dim + ac_dim, 400)),
-                ("ln", (nn.LayerNorm if hps.layer_norm else nn.Identity)(400)),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(400)),
                 ("nl", nn.Softsign()),
             ]))),
             ("fc_block_2", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(400, 300)),
-                ("ln", (nn.LayerNorm if hps.layer_norm else nn.Identity)(300)),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
                 ("nl", nn.Softsign()),
             ]))),
         ]))
@@ -219,7 +218,7 @@ class Critic(nn.Module):
         x = torch.cat([ob, ac], dim=-1)
         x = self.fc_stack(x)
         x = self.head(x)
-        if self.hps.use_c51:
+        if self.use_c51:
             # return a categorical distribution
             x = ff.log_softmax(x, dim=1).exp()
         return x
