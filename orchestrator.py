@@ -21,7 +21,6 @@ def rollout(env, agent, seed, rollout_len):
     agent.reset_noise()
     # reset agent env
     ob, _ = env.reset(seed=seed)  # seed is a keyword argument, not positional
-    ob = np.array(ob)
 
     while True:
 
@@ -107,14 +106,13 @@ def rollout(env, agent, seed, rollout_len):
             agent.store_transition(transition)
 
         # set current state with the next
-        ob = np.array(deepcopy(new_ob))
+        ob = deepcopy(new_ob)
 
         if done:
             # reset agent noise process
             agent.reset_noise()
             # reset the env
             ob, _ = env.reset(seed=seed)
-            ob = np.array(ob)
 
         t += 1
 
@@ -128,7 +126,6 @@ def episode(env, agent, seed):
     logger.warn("remember: in episode generator, we generate a seed randomly")
     logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
     ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
-    ob = np.array(ob)
 
     cur_ep_len = 0
     cur_ep_env_ret = 0
@@ -152,7 +149,7 @@ def episode(env, agent, seed):
         env_rews.append(env_rew)
         cur_ep_len += 1
         cur_ep_env_ret += env_rew
-        ob = np.array(deepcopy(new_ob))
+        ob = deepcopy(new_ob)
 
         if done:
             obs = np.array(obs)
@@ -175,7 +172,6 @@ def episode(env, agent, seed):
             logger.warn("remember: in episode generator, we generate a seed randomly")
             logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
             ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
-            ob = np.array(ob)
 
 
 def evaluate(cfg, env, agent_wrapper, name):
