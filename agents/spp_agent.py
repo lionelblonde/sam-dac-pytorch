@@ -283,11 +283,11 @@ class SPPAgent(object):
 
             # compute qz estimate
             z = self.crit(state, action).unsqueeze(-1)
-            z.data.clamp_(0.01, 0.99)
+            z.clamp_(0.01, 0.99)
 
             # compute target qz estimate
             z_prime = self.targ_crit(next_state, next_action)
-            z_prime.data.clamp_(0.01, 0.99)
+            z_prime.clamp_(0.01, 0.99)
 
             gamma_mask = ((self.hps["gamma"] ** td_len) * (1 - done))
             tz = reward + (gamma_mask * self.c51_supp.view(1, self.hps["c51_num_atoms"]))
@@ -439,7 +439,7 @@ class SPPAgent(object):
 
         # compute target action
         if self.hps["targ_actor_smoothing"]:
-            n_ = action.clone().detach().data.normal_(0., self.hps["td3_std"]).to(self.device)
+            n_ = action.clone().detach().normal_(0., self.hps["td3_std"]).to(self.device)
             n_ = n_.clamp(-self.hps["td3_c"], self.hps["td3_c"])
             next_action = (self.targ_actr(next_state) + n_).clamp(-self.max_ac, self.max_ac)
         else:
@@ -677,28 +677,30 @@ class SPPAgent(object):
 
         if sum([self.hps["use_c51"], self.hps["use_qr"]]) == 0:
             # if non-distributional, targets slowly track their non-target counterparts
-            for param, targ_param in zip(self.actr.parameters(),
-                                         self.targ_actr.parameters()):
-                targ_param.data.copy_(
-                    self.polyak * param.data +
-                        (1. - self.polyak) * targ_param.data)
-            for param, targ_param in zip(self.crit.parameters(),
-                                         self.targ_crit.parameters()):
-                targ_param.data.copy_(
-                    self.polyak * param.data +
-                        (1. - self.polyak) * targ_param.data)
-            if self.clipped_double:
-                for param, targ_param in zip(self.twin.parameters(),
-                                             self.targ_twin.parameters()):
-                    targ_param.data.copy_(
-                        self.polyak * param.data +
-                            (1. - self.polyak) * targ_param.data)
+            with torch.no_grad():
+                for param, targ_param in zip(self.actr.parameters(),
+                                             self.targ_actr.parameters()):
+                    new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                    targ_param.copy_(new_param)
+                for param, targ_param in zip(self.crit.parameters(),
+                                             self.targ_crit.parameters()):
+                    new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                    targ_param.copy_(new_param)
+                if self.clipped_double:
+                    for param, targ_param in zip(self.twin.parameters(),
+                                                 self.targ_twin.parameters()):
+                        new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                        targ_param.copy_(new_param)
         elif self.crit_updates_so_far % self.hps["targ_up_freq"] == 0:
             # distributional case: periodically set target weights with online models
-            self.targ_actr.load_state_dict(self.actr.state_dict())
-            self.targ_crit.load_state_dict(self.crit.state_dict())
-            if self.clipped_double:
-                self.targ_twin.load_state_dict(self.twin.state_dict())
+            with torch.no_grad():
+                actr_state_dict = self.actr.state_dict()
+                crit_state_dict = self.crit.state_dict()
+                self.targ_actr.load_state_dict(actr_state_dict)
+                self.targ_crit.load_state_dict(crit_state_dict)
+                if self.clipped_double:
+                    twin_state_dict = self.twin.state_dict()
+                    self.targ_twin.load_state_dict(twin_state_dict)
 
     def adapt_param_noise(self):
         """Adapt the parameter noise standard deviation"""
@@ -713,15 +715,14 @@ class SPPAgent(object):
 
         # update the perturbable params
         for p in self.actr.perturbable_params:
-            param = (self.actr.state_dict()[p]).clone()
-            param_ = param.clone()
-            noise = param_.data.normal_(0, self.param_noise.cur_std)
-            self.apnp_actr.state_dict()[p].data.copy_((param + noise).data)
+            param = (self.actr.state_dict()[p]).clone().detach()
+            noise = param.clone().detach().normal_(0, self.param_noise.cur_std)
+            self.apnp_actr.state_dict()[p].detach().copy_(param + noise)
 
         # update the non-perturbable params
         for p in self.actr.non_perturbable_params:
-            param = self.actr.state_dict()[p].clone()
-            self.apnp_actr.state_dict()[p].data.copy_(param.data)
+            param = self.actr.state_dict()[p].clone().detach()
+            self.apnp_actr.state_dict()[p].detach().copy_(param)
 
         # compute distance between actor and perturbed actor predictions
         if self.hps["wrap_absorb"]:
@@ -745,14 +746,13 @@ class SPPAgent(object):
         if self.param_noise is not None:
             # update the perturbable params
             for p in self.actr.perturbable_params:
-                param = (self.actr.state_dict()[p]).clone()
-                param_ = param.clone()
-                noise = param_.data.normal_(0, self.param_noise.cur_std)
-                self.pnp_actr.state_dict()[p].data.copy_((param + noise).data)
+                param = (self.actr.state_dict()[p]).clone().detach()
+                noise = param.clone().detach().normal_(0, self.param_noise.cur_std)
+                self.pnp_actr.state_dict()[p].detach().copy_(param + noise)
             # update the non-perturbable params
             for p in self.actr.non_perturbable_params:
-                param = self.actr.state_dict()[p].clone()
-                self.pnp_actr.state_dict()[p].data.copy_(param.data)
+                param = self.actr.state_dict()[p].clone().detach()
+                self.pnp_actr.state_dict()[p].detach().copy_(param)
 
     def save_to_path(self, path, xtra=None):
         """Save the agent to disk"""
