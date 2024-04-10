@@ -127,7 +127,7 @@ def episode(env, agent, seed):
     rng = np.random.default_rng()
     logger.warn("remember: in episode generator, we generate a seed randomly")
     logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
-    ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())  # TODO(lionel): do this
+    ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
     ob = np.array(ob)
 
     cur_ep_len = 0
