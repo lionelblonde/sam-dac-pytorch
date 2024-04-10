@@ -1,8 +1,3 @@
-# meta
-task: "train"
-benchmark: "mujoco"
-algo: "samdac"
-
 # resources
 cuda: false
 fp16: false
