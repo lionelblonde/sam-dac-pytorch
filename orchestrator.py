@@ -122,9 +122,10 @@ def episode(env, agent, seed):
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)  # aligned on seed, so always reproducible
     logger.warn("remember: in episode generator, we generate a seed randomly")
     logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
+    # note that despite sampling a new seed, it is using a seeded rng: reproducible
     ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
 
     cur_ep_len = 0
