@@ -86,7 +86,6 @@ class SPPAgent(object):
         # create observation normalizer that maintains running statistics
         self.rms_obs = RunningMoments(shape=self.ob_shape, device=self.device)
 
-        assert self.hps["ret_norm"] or not self.hps["popart"]
         assert not (self.hps["use_c51"] and self.hps["ret_norm"])
         assert not (self.hps["use_qr"] and self.hps["ret_norm"])
         if self.hps["ret_norm"]:
