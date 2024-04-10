@@ -488,7 +488,7 @@ class SPPAgent(object):
             self.twin_opt.zero_grad()
 
             self.send_to_dash(
-                {"crit_loss": crit_loss},
+                {"twin_loss": twin_loss},
                 step_metric=self.crit_updates_so_far,  # as many updates as critic
                 glob="train",
             )
