@@ -39,7 +39,7 @@ def rollout(env, agent, seed, rollout_len):
         done = terminated or truncated  # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
         if truncated and env._elapsed_steps != env._max_episode_steps:
-            logger.warn("termination caused by something else than time limit; OO-bounds?")
+            logger.warn("termination caused by something else than time limit; out of bounds?")
 
         if agent.hps["wrap_absorb"]:
             _ob = np.append(ob, 0)
@@ -124,9 +124,10 @@ def episode(env, agent, seed):
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
 
-    # ob, _ = env.reset(seed=seed)
     rng = np.random.default_rng()
-    ob, _ = env.reset(seed=seed + rng.integers(10000, size=1).item())  # TODO(lionel): do this
+    logger.warn("remember: in episode generator, we generate a seed randomly")
+    logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
+    ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())  # TODO(lionel): do this
     ob = np.array(ob)
 
     cur_ep_len = 0
@@ -171,8 +172,9 @@ def episode(env, agent, seed):
             obs = []
             acs = []
             env_rews = []
-            # ob, _ = env.reset(seed=seed)
-            ob, _ = env.reset(seed=seed + rng.integers(10000, size=1).item())
+            logger.warn("remember: in episode generator, we generate a seed randomly")
+            logger.warn("i.e. not using 'ob, _ = env.reset(seed=seed)' with same seed")
+            ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
             ob = np.array(ob)
 
 
