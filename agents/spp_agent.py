@@ -411,7 +411,7 @@ class SPPAgent(object):
             for k, v in metrics.items()
         }
         if glob == "train":
-            wandb_dict[f"{glob}/lr"] = self.actr_sched.get_last_lr()[0]  # current lr
+            wandb_dict[f"{glob}/actr_lr"] = self.actr_sched.get_last_lr()[0]  # current lr
 
         wandb_dict[f"{glob}/step"] = step_metric
 
