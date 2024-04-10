@@ -372,28 +372,8 @@ class SPPAgent(object):
             targ_q = self.norm_rets(targ_q)
 
             if self.hps["ret_norm"]:
-                if self.hps["popart"]:
-                    # apply Pop-Art, https://arxiv.org/pdf/1602.07714.pdf
-                    # save the pre-update running stats
-                    old_mean = torch.Tensor(self.rms_ret.mean).to(self.device)
-                    old_std = torch.Tensor(self.rms_ret.std).to(self.device)
-                    # update the running stats
-                    self.rms_ret.update(targ_q)
-                    # get the post-update running statistics
-                    new_mean = torch.Tensor(self.rms_ret.mean).to(self.device)
-                    new_std = torch.Tensor(self.rms_ret.std).to(self.device)
-                    # preserve the output from before the change of normalization old->new
-                    # for both online and target critic(s)
-                    outs = [self.crit.out_params, self.targ_crit.out_params]
-                    # also use the twin
-                    outs.extend([self.twin.out_params, self.targ_twin.out_params])
-                    for out in outs:
-                        w, b = out
-                        w.data.copy_(w.data * old_std / new_std)
-                        b.data.copy_(((b.data * old_std) + old_mean - new_mean) / new_std)
-                else:
-                    # update the running stats
-                    self.rms_ret.update(targ_q)
+                # update the running stats
+                self.rms_ret.update(targ_q)
 
             # critic and twin losses
             crit_loss = ff.smooth_l1_loss(q, targ_q)  # Huber loss for both here and below

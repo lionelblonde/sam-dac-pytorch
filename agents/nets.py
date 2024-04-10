@@ -222,7 +222,3 @@ class Critic(nn.Module):
             # return a categorical distribution
             x = ff.log_softmax(x, dim=1).exp()
         return x
-
-    @property
-    def out_params(self):
-        return list(self.head.parameters())
