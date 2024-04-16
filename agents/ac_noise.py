@@ -1,6 +1,7 @@
 import math
 from typing import Optional
 
+from einops import repeat
 import torch
 
 
@@ -19,8 +20,10 @@ class NormalActionNoise(ActionNoise):
         self.sigma = sigma
         self.device = self.mu.device  # grap the device we are on (assumed sigma and mu on same)
 
-    def generate(self):
-        return torch.normal(self.mu, self.sigma).to(self.device)
+    def generate(self, n: int):
+        raise ValueError(self.mu.size())
+        return torch.normal(repeat(self.mu, "d -> n d", n=n),
+                            repeat(self.sigma, "d -> n d", n=n)).to(self.device)
 
     def __repr__(self):
         return f"NormalAcNoise(mu={self.mu}, sigma={self.sigma})"

@@ -189,15 +189,15 @@ class SPPAgent(object):
             elif "normal" in cnt:
                 _, std = cnt.split("_")
                 # spherical (isotropic) gaussian action noise
-                mu = torch.zeros(self.ac_shape[0]).to(self.device)
+                mu = torch.zeros(self.ac_shape[-1]).to(self.device)
                 sigma = float(std) * torch.ones(self.ac_shape[0]).to(self.device)
                 ac_noise = NormalActionNoise(mu=mu, sigma=sigma)
                 logger.info(f"{ac_noise} configured")
             elif "ou" in cnt:
                 _, std = cnt.split("_")
                 # Ornstein-Uhlenbeck action noise
-                mu = torch.zeros(self.ac_shape[0]).to(self.device)
-                sigma = float(std) * torch.ones(self.ac_shape[0]).to(self.device)
+                mu = torch.zeros(self.ob_shape[0], self.ac_shape[-1]).to(self.device)
+                sigma = float(std) * torch.ones(self.ob_shape[0], self.ac_shape[-1]).to(self.device)
                 ac_noise = OUActionNoise(mu=mu, sigma=sigma)
                 logger.info(f"{ac_noise} configured")
             else:
@@ -245,7 +245,9 @@ class SPPAgent(object):
         """Predict an action, with or without perturbation"""
 
         # create tensor from the state (`require_grad=False` by default)
-        ob = torch.Tensor(ob[None]).to(self.device)
+        if len(list(ob.shape)) == 1:  # TODO(lionel): fix
+            ob = ob[None]
+        ob = torch.Tensor(ob).to(self.device)
 
         # predict following a parameter-noise-perturbed actor, or the non-perturbed actor
         ac = self.pnp_actr(ob) if apply_noise and self.param_noise is not None else self.actr(ob)
@@ -257,7 +259,7 @@ class SPPAgent(object):
             ac += noise
 
         # place on cpu and collapse into one dimension
-        ac = ac.cpu().detach().numpy().flatten()
+        ac = ac.cpu().detach().numpy() #.flatten()
 
         return ac.clip(-self.max_ac, self.max_ac)
 

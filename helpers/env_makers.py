@@ -1,15 +1,19 @@
 import os
 from pathlib import Path
+from typing import Tuple, Dict, Union
 
 import numpy as np
 
 import gymnasium as gym
+from gymnasium.core import Env
+from gymnasium.experimental.vector.async_vector_env import AsyncVectorEnv
+from gymnasium.experimental.vector.sync_vector_env import SyncVectorEnv
 
 from helpers import logger
 import environments
 
 
-def get_benchmark(env_id):
+def get_benchmark(env_id: str):
     # verify that the specified env is amongst the admissible ones
     benchmark = None
     for k, v in environments.BENCHMARKS.items():
@@ -22,7 +26,10 @@ def get_benchmark(env_id):
     return benchmark
 
 
-def make_env(env_id, wrap_absorb, record, render):
+def make_env(
+        env_id: str, *, vector: bool, wrap_absorb: bool, record: bool, render: bool,
+    ) -> Tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
+               Dict[str, Tuple[int]], Dict[str, Tuple[int]], float, int]:
     # create an environment
     bench = get_benchmark(env_id)  # at this point benchmark is valid
 
@@ -36,12 +43,20 @@ def make_env(env_id, wrap_absorb, record, render):
         except OSError:
             pass
 
-        return make_farama_mujoco_env(env_id, wrap_absorb, record, render)
+        return make_farama_mujoco_env(
+            env_id, vector=vector, wrap_absorb=wrap_absorb, record=record, render=render)
     raise ValueError(f"invalid benchmark: {bench}")
 
 
-def make_farama_mujoco_env(env_id, wrap_absorb, record, render):
+def make_farama_mujoco_env(
+        env_id: str, *, vector: bool, wrap_absorb: bool, record: bool, render: bool,
+    ) -> Tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
+               Dict[str, Tuple[int]], Dict[str, Tuple[int]], float, int]:
+
     # not ideal for code golf, but clearer for debug
+
+    assert sum([record, vector]) <= 1, "not both same time"
+    assert sum([render, vector]) <= 1, "not both same time"
 
     # create env
     # normally the windowed one is "human" .other option for later: "rgb_array", but prefer:
@@ -50,9 +65,13 @@ def make_farama_mujoco_env(env_id, wrap_absorb, record, render):
         env = gym.make(env_id, render_mode="rgb_array_list")
     elif render:
         env = gym.make(env_id, render_mode="human")
+    # reference: https://younis.dev/blog/render-api/
+    elif vector:
+        env = gym.make_vec(env_id, num_envs=4, vectorization_mode="async")  # TODO(lionel): hp
+        assert isinstance(env, (AsyncVectorEnv, SyncVectorEnv))
+        logger.info("using vectorized envs")
     else:
         env = gym.make(env_id)
-    # reference: https://younis.dev/blog/render-api/
 
     # build shapes for nets and replay buffer
     net_shapes = {}
@@ -73,9 +92,9 @@ def make_farama_mujoco_env(env_id, wrap_absorb, record, render):
 
     # for the replay buffer
     if wrap_absorb:
-        assert len(ob_shape) == 1, "wrap absorb only works for non-pix envs"
-        ob_dim = ob_dim_orig = ob_shape[0]
-        ac_dim = ac_dim_orig = ac_shape[0]  # for both: num dims
+        # assert len(ob_shape) == 1, "wrap absorb only works for non-pix envs"  # TODO(lionel): fix
+        ob_dim = ob_dim_orig = ob_shape[-1]
+        ac_dim = ac_dim_orig = ac_shape[-1]  # for both: num dims
         ob_dim += 1
         ac_dim += 1
         erb_shapes.update({
@@ -109,5 +128,6 @@ def make_farama_mujoco_env(env_id, wrap_absorb, record, render):
     # now it is just needed to wrap the absorbing states in the demo dataset
     assert env.spec is not None
     max_env_steps = env.spec.max_episode_steps
+    assert max_env_steps is not None
 
     return env, net_shapes, erb_shapes, max_ac, max_env_steps

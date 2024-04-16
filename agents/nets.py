@@ -67,8 +67,8 @@ class Discriminator(nn.Module):
                  hps: dict, rms_obs: RunningMoments):
         super(Discriminator, self).__init__()
         self.hps = hps
-        ob_dim = ob_shape[0]
-        ac_dim = ac_shape[0]
+        ob_dim = ob_shape[-1]
+        ac_dim = ac_shape[-1]
         if self.hps["wrap_absorb"]:
             ob_dim += 1
             ac_dim += 1
@@ -134,8 +134,8 @@ class Actor(nn.Module):
     def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
                  hps: dict, rms_obs: RunningMoments, max_ac: float):
         super(Actor, self).__init__()
-        ob_dim = ob_shape[0]
-        ac_dim = ac_shape[0]
+        ob_dim = ob_shape[-1]
+        ac_dim = ac_shape[-1]
         self.layer_norm = hps["layer_norm"]
         self.rms_obs = rms_obs
         self.max_ac = max_ac
@@ -181,8 +181,8 @@ class Critic(nn.Module):
     def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
                  hps: dict, rms_obs: RunningMoments):
         super(Critic, self).__init__()
-        ob_dim = ob_shape[0]
-        ac_dim = ac_shape[0]
+        ob_dim = ob_shape[-1]
+        ac_dim = ac_shape[-1]
         self.use_c51 = hps["use_c51"]
         self.layer_norm = hps["layer_norm"]
         self.rms_obs = rms_obs

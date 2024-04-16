@@ -41,7 +41,7 @@ def rollout(env, agent, seed, rollout_len):
         if truncated and env._elapsed_steps != env._max_episode_steps:
             logger.warn("termination caused by something else than time limit; out of bounds?")
 
-        if agent.hps["wrap_absorb"]:
+        if agent.hps.wrap_absorb:
             _ob = np.append(ob, 0)
             _ac = np.append(ac, 0)
 
