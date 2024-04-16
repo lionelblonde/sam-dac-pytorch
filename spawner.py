@@ -3,6 +3,7 @@ from copy import deepcopy
 import os
 import sys
 
+from omegaconf import OmegaConf, DictConfig
 import fire
 import numpy as np
 import subprocess
@@ -42,6 +43,7 @@ NUM_SWEEP_TRIALS = 10
 class Spawner(object):
 
     def __init__(self, cfg, num_demos, num_seeds, env_bundle, caliber, deployment, sweep):
+
         self.num_seeds = num_seeds
         self.deployment = deployment
         self.sweep = sweep
@@ -49,13 +51,19 @@ class Spawner(object):
 
         assert self.deployment in {"tmux", "slurm"}
 
-        # retrieve cfg from filesystem
-        with Path(cfg).open() as f:
-            self.cfg = yaml.safe_load(f)
+        # retrieve config from filesystem
+        proj_root = Path(__file__).resolve().parent
+        _cfg = OmegaConf.load(proj_root / Path(cfg))
+        assert isinstance(_cfg, DictConfig)
+        self._cfg: DictConfig = _cfg  # for the type-checker
+
+        logger.info("the config loaded:")
+        logger.info(OmegaConf.to_yaml(self._cfg))
+
         # make proper list of number of demos to tackle
         self.num_demos = [int(i) for i in num_demos]  # `num_demos` is a list!
         # assemble wandb project name
-        proj = self.cfg["wandb_project"].upper()
+        proj = self._cfg.wandb_project.upper()
         depl = self.deployment.upper()
         self.wandb_project = f"{proj}-{depl}"
         # define spawn type
@@ -74,11 +82,11 @@ class Spawner(object):
             }
             self.duration = calibers[caliber]  # KeyError trigger if invalid caliber
             if "verylong" in caliber:
-                if self.cfg["cuda"]:
+                if self._cfg.cuda:
                     self.partition = "private-cui-gpu"
                 else:
                     self.partition = "public-cpu,private-cui-cpu,public-longrun-cpu"
-            elif self.cfg["cuda"]:
+            elif self._cfg.cuda:
                 self.partition = "shared-gpu,private-cui-gpu"
             else:
                 self.partition = "shared-cpu,public-cpu,private-cui-cpu"
@@ -196,7 +204,7 @@ class Spawner(object):
                                 "#SBATCH --output=./out/run_%j.out\n")
             if self.deployment == "slurm":
                 # Sometimes versions are needed (some clusters)
-                if self.cfg["cuda"]:
+                if self._cfg.cuda:
                     constraint = ""
                     bash_script_str += ("#SBATCH --gpus=1\n")  # gpus=titan:1 if needed
                     if constraint:  # if not empty
@@ -205,7 +213,7 @@ class Spawner(object):
 
             # load modules
             bash_script_str += ("module load GCC/9.3.0\n")
-            if self.cfg["cuda"]:
+            if self._cfg.cuda:
                 bash_script_str += ("module load CUDA/11.5.0\n")
 
             # sometimes!? bash_script_str += ("module load Mesa/19.2.1\n")
@@ -264,8 +272,8 @@ def run(cfg: str,
     # create directory for spawned jobs
     root = Path(__file__).resolve().parent
     spawn_dir = Path(root) / "spawn"
-    Path(spawn_dir).mkdir(exist_ok=True)
-    tmux_dir = Path(root) / "tmux"  # create name to prevent unbound from type-checker
+    spawn_dir.mkdir(exist_ok=True)
+    tmux_dir = root / "tmux"  # create name to prevent unbound from type-checker
     if deployment == "tmux":
         Path(tmux_dir).mkdir(exist_ok=True)
 
@@ -296,8 +304,8 @@ def run(cfg: str,
             logger.info(job + "\n")
         dirname = name.split(".")[1]
         full_dirname = Path(spawn_dir) / dirname
-        Path(full_dirname).mkdir(exist_ok=True)
-        job_name = Path(full_dirname) / f"{name}.sh"
+        full_dirname.mkdir(exist_ok=True)
+        job_name = full_dirname / f"{name}.sh"
         job_name.write_text(job)
         if deploy_now and deployment != "tmux":
             # spawn the job!

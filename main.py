@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import fire
-import yaml
+from omegaconf import OmegaConf, DictConfig
 import random
 import numpy as np
 import torch
@@ -63,37 +63,41 @@ class MagicRunner(object):
 
         # retrieve config from filesystem
         proj_root = Path(__file__).resolve().parent
-        with (proj_root / Path(cfg)).open() as f:
-            self._cfg = yaml.safe_load(f)
+        _cfg = OmegaConf.load(proj_root / Path(cfg))
+        assert isinstance(_cfg, DictConfig)
+        self._cfg: DictConfig = _cfg  # for the type-checker
 
-        self._cfg["root"] = proj_root  # in config: used by wandb
+        logger.info("the config loaded:")
+        logger.info(OmegaConf.to_yaml(self._cfg))
+
+        self._cfg.root = str(proj_root)  # in config: used by wandb
         for k in ("checkpoints", "logs", "videos"):
             new_k = f"{k[:-1]}_dir"
-            self._cfg[new_k] = Path(self._cfg["root"]) / k
+            self._cfg[new_k] = str(proj_root / k)  # for yml saving
 
         # set only if nonexistant key in cfg
-        self._cfg["seed"] = seed
-        self._cfg["env_id"] = env_id
-        self._cfg["num_demos"] = num_demos
-        self._cfg["expert_path"] = expert_path
+        self._cfg.seed = seed
+        self._cfg.env_id = env_id
+        self._cfg.num_demos = num_demos
+        self._cfg.expert_path = expert_path
 
         assert "wandb_project" in self._cfg  # if not in cfg from fs, abort
         if wandb_project is not None:
-            self._cfg["wandb_project"] = wandb_project  # overwrite cfg
+            self._cfg.wandb_project = wandb_project  # overwrite cfg
 
         assert "uuid" not in self._cfg  # uuid should never be in the cfg file
-        if uuid is not None:
-            self._cfg["uuid"] = uuid  # add in cfg
-        else:
-            self._cfg["uuid"] = make_uuid()  # create a uuid
+        self._cfg.uuid = uuid if uuid is not None else make_uuid()
 
         assert "load_ckpt" not in self._cfg  # load_ckpt should never be in the cfg file
         if load_ckpt is not None:
-            self._cfg["load_ckpt"] = load_ckpt  # add in cfg
+            self._cfg.load_ckpt = load_ckpt  # add in cfg
         else:
             logger.info("no ckpt to load: key will not exist in cfg")
 
-        self.name = get_name(self._cfg["uuid"], self._cfg["env_id"], self._cfg["seed"])
+        self.name = get_name(self._cfg.uuid, self._cfg.env_id, self._cfg.seed)
+
+        # set the cfg to read-only for safety
+        OmegaConf.set_readonly(self._cfg, value=True)
 
     def train(self):
 
@@ -104,27 +108,27 @@ class MagicRunner(object):
         np.set_printoptions(precision=3)
 
         # name
-        name = f"{self.name}.train_demos{str(self._cfg['num_demos']).zfill(3)}"
+        name = f"{self.name}.train_demos{str(self._cfg.num_demos).zfill(3)}"
         # logger
         if DISABLE_LOGGER:
             logger.set_level(logger.DISABLED)  # turn the logging off
         else:
-            log_path = Path(self._cfg["log_dir"]) / name
+            log_path = Path(self._cfg.log_dir) / name
             log_path.mkdir(exist_ok=True)
             logger.configure(directory=log_path, format_strs=["stdout", "log", "json", "csv"])
             # config dump
-            (log_path / "config.yml").write_text(yaml.dump(self._cfg, default_flow_style=False))
+            OmegaConf.save(config=self._cfg, f=(log_path / "cfg.yml"))
 
         # device
-        assert not self._cfg["fp16"] or self._cfg["cuda"], "fp16 => cuda"
-        if self._cfg["cuda"]:
+        assert not self._cfg.fp16 or self._cfg.cuda, "fp16 => cuda"
+        if self._cfg.cuda:
             # use cuda
             assert torch.cuda.is_available()
             torch.backends.cudnn.benchmark = False
             torch.backends.cudnn.deterministic = True
             device = torch.device("cuda:0")
         else:
-            if self._cfg["mps"]:  # TODO(lionel): add this as hp
+            if self._cfg.mps:  # TODO(lionel): add this as hp
                 assert torch.mps
                 # use Apple"s Metal Performance Shaders (MPS)
                 device = torch.device("mps:0")
@@ -135,30 +139,30 @@ class MagicRunner(object):
         logger.info(f"device in use: {device}")
 
         # seed
-        torch.manual_seed(self._cfg["seed"])
-        torch.cuda.manual_seed_all(self._cfg["seed"])
-        np_rng = np.random.default_rng(self._cfg["seed"])
+        torch.manual_seed(self._cfg.seed)
+        torch.cuda.manual_seed_all(self._cfg.seed)
+        np_rng = np.random.default_rng(self._cfg.seed)
 
         # env
         env, net_shapes, erb_shapes, max_ac, max_episode_steps = make_env(
-            self._cfg["env_id"],
-            self._cfg["wrap_absorb"],
+            self._cfg.env_id,
+            self._cfg.wrap_absorb,
             record=False,
-            render=self._cfg["render"],
+            render=self._cfg.render,
         )
 
         # create an agent wrapper
 
         expert_dataset = DemoDataset(
             np_rng=np_rng,
-            expert_path=self._cfg["expert_path"],
-            num_demos=self._cfg["num_demos"],
+            expert_path=self._cfg.expert_path,
+            num_demos=self._cfg.num_demos,
             max_ep_steps=max_episode_steps,
-            wrap_absorb=self._cfg["wrap_absorb"],
+            wrap_absorb=self._cfg.wrap_absorb,
         )
         replay_buffer = ReplayBuffer(
             np_rng=np_rng,
-            capacity=self._cfg["mem_size"],
+            capacity=self._cfg.mem_size,
             erb_shapes=erb_shapes,
         )
         logger.info(f"{replay_buffer} configured")
@@ -175,10 +179,10 @@ class MagicRunner(object):
 
         # create an evaluation environment not to mess up with training rollouts
         eval_env, _, _, _, _ = make_env(
-            self._cfg["env_id"],
-            self._cfg["wrap_absorb"],
-            record=self._cfg["record"],
-            render=self._cfg["render"],
+            self._cfg.env_id,
+            self._cfg.wrap_absorb,
+            record=self._cfg.record,
+            render=self._cfg.render,
         )
 
         # train
@@ -215,15 +219,15 @@ class MagicRunner(object):
         os.environ["CUDA_VISIBLE_DEVICES"] = ""  # kill any possibility of usage
 
         # seed
-        torch.manual_seed(self._cfg["seed"])
-        torch.cuda.manual_seed_all(self._cfg["seed"])
+        torch.manual_seed(self._cfg.seed)
+        torch.cuda.manual_seed_all(self._cfg.seed)
 
         # env
         env, net_shapes, _, max_ac, _ = make_env(
-            self._cfg["env_id"],
-            self._cfg["wrap_absorb"],
-            record=self._cfg["record"],
-            render=self._cfg["render"],
+            self._cfg.env_id,
+            self._cfg.wrap_absorb,
+            record=self._cfg.record,
+            render=self._cfg.render,
         )
 
         # create an agent wrapper

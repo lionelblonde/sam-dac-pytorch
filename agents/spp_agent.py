@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
+from omegaconf import DictConfig
 import wandb
 import numpy as np
 import torch
@@ -25,7 +26,7 @@ class SPPAgent(object):
                  net_shapes: dict,
                  max_ac: float,
                  device: torch.device,
-                 hps: dict,
+                 hps: DictConfig,
                  expert_dataset: Optional[DemoDataset],
                  replay_buffer: Optional[ReplayBuffer]):
 
@@ -33,21 +34,18 @@ class SPPAgent(object):
         self.max_ac = max_ac
 
         self.device = device
-        self.hps = hps
 
-        # the very common hps
-        self.batch_size = self.hps["batch_size"]
-        self.clipped_double = self.hps["clipped_double"]
-        self.polyak = self.hps["polyak"]
+        assert isinstance(hps, DictConfig)
+        self.hps = hps
 
         self.timesteps_so_far = 0
         self.actr_updates_so_far = 0
         self.crit_updates_so_far = 0
         self.disc_updates_so_far = 0
 
-        assert self.hps["lookahead"] > 1 or not self.hps["n_step_returns"]
-        assert self.hps["rollout_len"] <= self.batch_size
-        if self.hps["clip_norm"] <= 0:
+        assert self.hps.lookahead > 1 or not self.hps.n_step_returns
+        assert self.hps.rollout_len <= self.hps.batch_size
+        if self.hps.clip_norm <= 0:
             logger.info("clip_norm <= 0, hence disabled.")
 
         # demo dataset
@@ -57,38 +55,38 @@ class SPPAgent(object):
         self.replay_buffer = replay_buffer
 
         # critic
-        assert sum([self.hps["use_c51"], self.hps["use_qr"], self.clipped_double]) == 1
+        assert sum([self.hps.use_c51, self.hps.use_qr, self.hps.clipped_double]) == 1
 
-        if self.hps["use_c51"]:
-            assert not self.clipped_double
-            c51_supp_range = (self.hps["c51_vmin"],
-                              self.hps["c51_vmax"],
-                              self.hps["c51_num_atoms"])
+        if self.hps.use_c51:
+            assert not self.hps.clipped_double
+            c51_supp_range = (self.hps.c51_vmin,
+                              self.hps.c51_vmax,
+                              self.hps.c51_num_atoms)
             self.c51_supp = torch.linspace(*c51_supp_range).to(self.device)
-            self.c51_delta = ((self.hps["c51_vmax"] - self.hps["c51_vmin"]) /
-                              (self.hps["c51_num_atoms"] - 1))
-        elif self.hps["use_qr"]:
-            assert not self.clipped_double
-            qr_cum_density = np.array([((2 * i) + 1) / (2.0 * self.hps["num_tau"])
-                                       for i in range(self.hps["num_tau"])])
+            self.c51_delta = ((self.hps.c51_vmax - self.hps.c51_vmin) /
+                              (self.hps.c51_num_atoms - 1))
+        elif self.hps.use_qr:
+            assert not self.hps.clipped_double
+            qr_cum_density = np.array([((2 * i) + 1) / (2.0 * self.hps.num_tau)
+                                       for i in range(self.hps.num_tau)])
             qr_cum_density = torch.Tensor(qr_cum_density).to(self.device)
-            self.qr_cum_density = qr_cum_density.view(1, 1, -1, 1).expand(self.batch_size,
-                                                                          self.hps["num_tau"],
-                                                                          self.hps["num_tau"],
+            self.qr_cum_density = qr_cum_density.view(1, 1, -1, 1).expand(self.hps.batch_size,
+                                                                          self.hps.num_tau,
+                                                                          self.hps.num_tau,
                                                                           -1).to(self.device)
         else:
             # if using neither distributional rl variant, use clipped double
-            assert self.clipped_double
+            assert self.hps.clipped_double
 
         # parse the noise types
-        self.param_noise, self.ac_noise = self.parse_noise_type(self.hps["noise_type"])
+        self.param_noise, self.ac_noise = self.parse_noise_type(self.hps.noise_type)
 
         # create observation normalizer that maintains running statistics
         self.rms_obs = RunningMoments(shape=self.ob_shape, device=self.device)
 
-        assert not (self.hps["use_c51"] and self.hps["ret_norm"])
-        assert not (self.hps["use_qr"] and self.hps["ret_norm"])
-        if self.hps["ret_norm"]:
+        assert not (self.hps.use_c51 and self.hps.ret_norm)
+        assert not (self.hps.use_qr and self.hps.ret_norm)
+        if self.hps.ret_norm:
             # create return normalizer that maintains running statistics
             self.rms_ret = RunningMoments(shape=(1,), device=self.device)
 
@@ -103,7 +101,7 @@ class SPPAgent(object):
         self.targ_actr.load_state_dict(self.actr.state_dict())
         self.targ_crit.load_state_dict(self.crit.state_dict())
 
-        if self.clipped_double:
+        if self.hps.clipped_double:
             # create second ("twin") critic and target critic
             # ref: TD3, https://arxiv.org/abs/1802.09477
             self.twin = Critic(*net_args[:-1]).to(self.device)
@@ -119,17 +117,17 @@ class SPPAgent(object):
             self.apnp_actr.load_state_dict(self.actr.state_dict())
 
         # set up the optimizers
-        self.actr_opt = torch.optim.Adam(self.actr.parameters(), lr=self.hps["actor_lr"])
+        self.actr_opt = torch.optim.Adam(self.actr.parameters(), lr=self.hps.actor_lr)
         self.crit_opt = torch.optim.Adam(
             self.crit.parameters(),
-            lr=self.hps["critic_lr"],
-            weight_decay=self.hps["wd_scale"],
+            lr=self.hps.critic_lr,
+            weight_decay=self.hps.wd_scale,
         )
-        if self.clipped_double:
+        if self.hps.clipped_double:
             self.twin_opt = torch.optim.Adam(
                 self.twin.parameters(),
-                lr=self.hps["critic_lr"],
-                weight_decay=self.hps["wd_scale"],
+                lr=self.hps.critic_lr,
+                weight_decay=self.hps.wd_scale,
             )
 
         # set up lr scheduler
@@ -140,7 +138,7 @@ class SPPAgent(object):
 
         if self.expert_dataset is not None:
             # set up demonstrations dataloader
-            self.e_batch_size = min(len(self.expert_dataset), self.batch_size)
+            self.e_batch_size = min(len(self.expert_dataset), self.hps.batch_size)
             self.e_dataloader = DataLoader(
                 self.expert_dataset,
                 self.e_batch_size,
@@ -150,23 +148,23 @@ class SPPAgent(object):
             assert len(self.e_dataloader) > 0
             # create discriminator and its optimizer
             self.disc = Discriminator(*net_args[:-1]).to(self.device)
-            self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps["d_lr"])
+            self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps.d_lr)
 
         log_module_info(self.actr)
         log_module_info(self.crit)
-        if self.clipped_double:
+        if self.hps.clipped_double:
             log_module_info(self.twin)
         log_module_info(self.disc)
 
     def norm_rets(self, x):
         """Standardize if return normalization is used, do nothing otherwise"""
-        if self.hps["ret_norm"]:
+        if self.hps.ret_norm:
             return self.rms_ret.standardize(x)
         return x
 
     def denorm_rets(self, x):
         """Standardize if return denormalization is used, do nothing otherwise"""
-        if self.hps["ret_norm"]:
+        if self.hps.ret_norm:
             return self.rms_ret.destandardize(x)
         return x
 
@@ -213,7 +211,7 @@ class SPPAgent(object):
         self.replay_buffer.append(transition)
         # Update the observation normalizer
         _state = transition["obs0"]
-        if self.hps["wrap_absorb"]:
+        if self.hps.wrap_absorb:
             if np.all(np.equal(_state, np.append(np.zeros_like(_state[0:-1]), 1.))):
                 # if this is a "flag" state (wrap absorbing): not used to update rms_obs
                 return
@@ -229,17 +227,17 @@ class SPPAgent(object):
             return self.get_syn_rew(x, y, z).numpy(force=True)
 
         # get a batch of transitions from replay buffer
-        if self.hps["n_step_returns"]:
+        if self.hps.n_step_returns:
             batch = self.replay_buffer.lookahead_sample(
-                self.batch_size,
-                self.hps["lookahead"],
-                self.hps["gamma"],
-                patcher=_patcher if self.hps["historical_patching"] else None,
+                self.hps.batch_size,
+                self.hps.lookahead,
+                self.hps.gamma,
+                patcher=_patcher if self.hps.historical_patching else None,
             )
         else:
             batch = self.replay_buffer.sample(
-                self.batch_size,
-                patcher=_patcher if self.hps["historical_patching"] else None,
+                self.hps.batch_size,
+                patcher=_patcher if self.hps.historical_patching else None,
             )
         return batch
 
@@ -278,7 +276,7 @@ class SPPAgent(object):
 
         twin_loss = None
 
-        if self.hps["use_c51"]:
+        if self.hps.use_c51:
 
             # compute qz estimate
             z = self.crit(state, action).unsqueeze(-1)
@@ -288,10 +286,10 @@ class SPPAgent(object):
             z_prime = self.targ_crit(next_state, next_action)
             z_prime.clamp_(0.01, 0.99)
 
-            gamma_mask = ((self.hps["gamma"] ** td_len) * (1 - done))
-            tz = reward + (gamma_mask * self.c51_supp.view(1, self.hps["c51_num_atoms"]))
-            tz = tz.clamp(self.hps["c51_vmin"], self.hps["c51_vmax"])
-            b = (tz - self.hps["c51_vmin"]) / self.c51_delta
+            gamma_mask = ((self.hps.gamma ** td_len) * (1 - done))
+            tz = reward + (gamma_mask * self.c51_supp.view(1, self.hps.c51_num_atoms))
+            tz = tz.clamp(self.hps.c51_vmin, self.hps.c51_vmax)
+            b = (tz - self.hps.c51_vmin) / self.c51_delta
             l = b.floor().long()  # noqa
             u = b.ceil().long()
             targ_z = z_prime.clone().zero_()
@@ -302,7 +300,7 @@ class SPPAgent(object):
                 targ_z[i].index_add_(0, u[i], z_prime_u[i])
 
             # reshape target to be of shape [batch_size, c51_num_atoms, 1]
-            targ_z = targ_z.view(-1, self.hps["c51_num_atoms"], 1)
+            targ_z = targ_z.view(-1, self.hps.c51_num_atoms, 1)
 
             # critic loss
             ce_losses = -(targ_z.detach() * torch.log(z)).sum(dim=1)
@@ -313,7 +311,7 @@ class SPPAgent(object):
             actr_loss = actr_loss.matmul(self.c51_supp).unsqueeze(-1)  # [batch_size, 1]
             actr_loss = actr_loss.mean()
 
-        elif self.hps["use_qr"]:
+        elif self.hps.use_qr:
 
             # compute qz estimate
             z = self.crit(state, action).unsqueeze(-1)
@@ -322,14 +320,14 @@ class SPPAgent(object):
             z_prime = self.targ_crit(next_state, next_action)
 
             # reshape rewards to be of shape [batch_size x num_tau, 1]
-            reward = reward.repeat(self.hps["num_tau"], 1)
+            reward = reward.repeat(self.hps.num_tau, 1)
             # reshape product of gamma and mask to be of shape [batch_size x num_tau, 1]
-            gamma_mask = ((self.hps["gamma"] ** td_len) * (1 - done)).repeat(
-                self.hps["num_tau"], 1)
+            gamma_mask = ((self.hps.gamma ** td_len) * (1 - done)).repeat(
+                self.hps.num_tau, 1)
             z_prime = z_prime.view(-1, 1)
             targ_z = reward + (gamma_mask * z_prime)
             # reshape target to be of shape [batch_size, num_tau, 1]
-            targ_z = targ_z.view(-1, self.hps["num_tau"], 1)
+            targ_z = targ_z.view(-1, self.hps.num_tau, 1)
 
             # critic loss
             # compute the TD error loss
@@ -366,11 +364,11 @@ class SPPAgent(object):
             q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +
                        0.25 * torch.max(q_prime, twin_q_prime))  # soft minimum from BCQ
             targ_q = (reward +
-                      (self.hps["gamma"] ** td_len) * (1. - done) *
+                      (self.hps.gamma ** td_len) * (1. - done) *
                       self.denorm_rets(q_prime).detach())
             targ_q = self.norm_rets(targ_q)
 
-            if self.hps["ret_norm"]:
+            if self.hps.ret_norm:
                 # update the running stats
                 self.rms_ret.update(targ_q)
 
@@ -401,7 +399,7 @@ class SPPAgent(object):
         """Update the critic and the actor"""
 
         # transfer to device
-        if self.hps["wrap_absorb"]:
+        if self.hps.wrap_absorb:
             state = torch.Tensor(batch["obs0_orig"]).to(self.device)
             action = torch.Tensor(batch["acs_orig"]).to(self.device)
             next_state = torch.Tensor(batch["obs1_orig"]).to(self.device)
@@ -411,15 +409,15 @@ class SPPAgent(object):
             next_state = torch.Tensor(batch["obs1"]).to(self.device)
         reward = torch.Tensor(batch["rews"]).to(self.device)
         done = torch.Tensor(batch["dones1"].astype("float32")).to(self.device)
-        if self.hps["n_step_returns"]:
+        if self.hps.n_step_returns:
             td_len = torch.Tensor(batch["td_len"]).to(self.device)
         else:
             td_len = torch.ones_like(done).to(self.device)
 
         # compute target action
-        if self.hps["targ_actor_smoothing"]:
-            n_ = action.clone().detach().normal_(0., self.hps["td3_std"]).to(self.device)
-            n_ = n_.clamp(-self.hps["td3_c"], self.hps["td3_c"])
+        if self.hps.targ_actor_smoothing:
+            n_ = action.clone().detach().normal_(0., self.hps.td3_std).to(self.device)
+            n_ = n_.clamp(-self.hps.td3_c, self.hps.td3_c)
             next_action = (self.targ_actr(next_state) + n_).clamp(-self.max_ac, self.max_ac)
         else:
             next_action = self.targ_actr(next_state)
@@ -433,8 +431,8 @@ class SPPAgent(object):
 
             # update actor
             actr_loss.backward()
-            if self.hps["clip_norm"] > 0:
-                cg.clip_grad_norm_(self.actr.parameters(), self.hps["clip_norm"])
+            if self.hps.clip_norm > 0:
+                cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
             self.actr_opt.step()
             self.actr_opt.zero_grad()
 
@@ -485,8 +483,8 @@ class SPPAgent(object):
 
         # create DataLoader object to iterate over transitions in rollouts
         d_keys = ["obs0"]
-        if self.hps["state_only"]:
-            if self.hps["n_step_returns"]:
+        if self.hps.state_only:
+            if self.hps.n_step_returns:
                 d_keys.append("obs1_td1")
             else:
                 d_keys.append("obs1")
@@ -509,8 +507,8 @@ class SPPAgent(object):
             # transfer to device
             p_input_a = d_batch["obs0"].to(self.device)
             e_input_a = e_batch["obs0"].to(self.device)
-            if self.hps["state_only"]:
-                if self.hps["n_step_returns"]:
+            if self.hps.state_only:
+                if self.hps.n_step_returns:
                     p_input_b = d_batch["obs1_td1"].to(self.device)
                 else:
                     p_input_b = d_batch["obs1"].to(self.device)
@@ -529,7 +527,7 @@ class SPPAgent(object):
                 input=scores,
                 target=torch.sigmoid(scores),
             )
-            entropy_loss = -self.hps["ent_reg_scale"] * entropy
+            entropy_loss = -self.hps.ent_reg_scale * entropy
 
             # create labels
             fake_labels = 0. * torch.ones_like(p_scores).to(self.device)
@@ -552,10 +550,10 @@ class SPPAgent(object):
             # sum losses
             disc_loss = p_e_loss + entropy_loss
 
-            if self.hps["grad_pen"]:
+            if self.hps.grad_pen:
                 # add gradient penalty to loss
                 grad_pen = self.grad_pen(p_input_a, p_input_b, e_input_a, e_input_b)
-                grad_pen *= self.hps["grad_pen_scale"]
+                grad_pen *= self.hps.grad_pen_scale
                 disc_loss += grad_pen
 
             # update parameters
@@ -567,7 +565,7 @@ class SPPAgent(object):
 
         # populate metrics with the latest values
         metrics.update({"entropy_loss": entropy_loss, "p_e_loss": p_e_loss})
-        if self.hps["grad_pen"]:
+        if self.hps.grad_pen:
             metrics.update({"grad_pen": grad_pen})
         self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob="train")
         del metrics
@@ -603,15 +601,15 @@ class SPPAgent(object):
         grads = torch.cat(list(grads), dim=-1)
         grads_norm = grads.norm(2, dim=-1)
 
-        if self.hps["one_sided_pen"]:
+        if self.hps.one_sided_pen:
             # penalize the gradient for having a norm GREATER than k
             grad_pen = torch.max(
                 torch.zeros_like(grads_norm),
-                grads_norm - self.hps["grad_pen_targ"],
+                grads_norm - self.hps.grad_pen_targ,
             ).pow(2)
         else:
             # penalize the gradient for having a norm LOWER OR GREATER than k
-            grad_pen = (grads_norm - self.hps["grad_pen_targ"]).pow(2)
+            grad_pen = (grads_norm - self.hps.grad_pen_targ).pow(2)
 
         return grad_pen.mean()  # average over batch
 
@@ -619,7 +617,7 @@ class SPPAgent(object):
 
         # define the discriminator inputs
         input_a = state
-        input_b = next_state if self.hps["state_only"] else action
+        input_b = next_state if self.hps.state_only else action
         assert sum([isinstance(x, torch.Tensor) for x in [input_a, input_b]]) in {0, 2}
         if not isinstance(input_a, torch.Tensor):  # then the other is not neither
             input_a = torch.Tensor(input_a)
@@ -636,7 +634,7 @@ class SPPAgent(object):
         # compatible with envs with traj cutoffs for bad (non-expert-like) behavior
         # e.g. walking simulations that get cut off when the robot falls over
         minimax_reward = -torch.log(1. - torch.sigmoid(score) + 1e-8)
-        if self.hps["minimax_only"]:
+        if self.hps.minimax_only:
             reward = minimax_reward
         else:
             # counterpart of GAN"s non-saturating loss
@@ -654,30 +652,30 @@ class SPPAgent(object):
     def update_target_net(self):
         """Update the target networks"""
 
-        if sum([self.hps["use_c51"], self.hps["use_qr"]]) == 0:
+        if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
             # if non-distributional, targets slowly track their non-target counterparts
             with torch.no_grad():
                 for param, targ_param in zip(self.actr.parameters(),
                                              self.targ_actr.parameters()):
-                    new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                    new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
                     targ_param.copy_(new_param)
                 for param, targ_param in zip(self.crit.parameters(),
                                              self.targ_crit.parameters()):
-                    new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                    new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
                     targ_param.copy_(new_param)
-                if self.clipped_double:
+                if self.hps.clipped_double:
                     for param, targ_param in zip(self.twin.parameters(),
                                                  self.targ_twin.parameters()):
-                        new_param = self.polyak * param + (1. - self.polyak) * targ_param
+                        new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
                         targ_param.copy_(new_param)
-        elif self.crit_updates_so_far % self.hps["targ_up_freq"] == 0:
+        elif self.crit_updates_so_far % self.hps.targ_up_freq == 0:
             # distributional case: periodically set target weights with online models
             with torch.no_grad():
                 actr_state_dict = self.actr.state_dict()
                 crit_state_dict = self.crit.state_dict()
                 self.targ_actr.load_state_dict(actr_state_dict)
                 self.targ_crit.load_state_dict(crit_state_dict)
-                if self.clipped_double:
+                if self.hps.clipped_double:
                     twin_state_dict = self.twin.state_dict()
                     self.targ_twin.load_state_dict(twin_state_dict)
 
@@ -689,7 +687,7 @@ class SPPAgent(object):
 
         # perturb separate copy of the policy to adjust the scale for the next perturbation
 
-        batch = self.replay_buffer.sample(self.batch_size, patcher=None)
+        batch = self.replay_buffer.sample(self.hps.batch_size, patcher=None)
         state = torch.Tensor(batch["obs0"]).to(self.device)
 
         # update the perturbable params
@@ -704,7 +702,7 @@ class SPPAgent(object):
             self.apnp_actr.state_dict()[p].detach().copy_(param)
 
         # compute distance between actor and perturbed actor predictions
-        if self.hps["wrap_absorb"]:
+        if self.hps.wrap_absorb:
             state = self.remove_absorbing(state)[0][:, 0:-1]
         self.pn_dist = torch.sqrt(ff.mse_loss(self.actr(state), self.apnp_actr(state)))
 
@@ -754,7 +752,7 @@ class SPPAgent(object):
             "disc_opt": self.disc_opt.state_dict(),
             "actr_sched": self.actr_sched.state_dict(),
         }
-        if self.clipped_double:
+        if self.hps.clipped_double:
             checkpoint.update({
                 "twin": self.twin.state_dict(),
                 "twin_opt": self.twin_opt.state_dict(),
@@ -776,7 +774,7 @@ class SPPAgent(object):
         self.crit_opt.load_state_dict(checkpoint["crit_opt"])
         self.disc_opt.load_state_dict(checkpoint["disc_opt"])
         self.actr_sched.load_state_dict(checkpoint["actr_sched"])
-        if self.clipped_double:
+        if self.hps.clipped_double:
             if "twin" in checkpoint:
                 self.twin.load_state_dict(checkpoint["twin"])
                 if "twin_opt" in checkpoint:

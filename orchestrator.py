@@ -2,6 +2,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from omegaconf import OmegaConf, DictConfig
 import wandb
 from wandb.errors import CommError
 import numpy as np
@@ -177,24 +178,26 @@ def episode(env, agent, seed):
 
 def evaluate(cfg, env, agent_wrapper, name):
 
-    vid_dir = Path(cfg["video_dir"]) / name
-    if cfg["record"]:
+    assert isinstance(cfg, DictConfig)
+
+    vid_dir = Path(cfg.video_dir) / name
+    if cfg.record:
         vid_dir.mkdir(parents=True, exist_ok=True)
 
     # create an agent
     agent = agent_wrapper()
 
     # create episode generator
-    ep_gen = episode(env, agent, cfg["seed"])
+    ep_gen = episode(env, agent, cfg.seed)
 
     # load the model
-    model_path = cfg["model_path"]
+    model_path = cfg.model_path
     agent.load_from_path(model_path)
     logger.info(f"model loaded from path:\n {model_path}")
 
     # collect trajectories
 
-    num_trajs = cfg["num_trajs"]
+    num_trajs = cfg.num_trajs
     len_buff, env_ret_buff = [], []
 
     for i in range(num_trajs):
@@ -207,7 +210,7 @@ def evaluate(cfg, env, agent_wrapper, name):
         len_buff.append(ep_len)
         env_ret_buff.append(ep_env_ret)
 
-        if cfg["record"]:
+        if cfg.record:
             # record a video of the episode
             frame_collection = env.render()  # ref: https://younis.dev/blog/render-api/
             record_video(vid_dir, str(i), np.array(frame_collection))
@@ -224,6 +227,8 @@ def evaluate(cfg, env, agent_wrapper, name):
 
 def learn(cfg, env, eval_env, agent_wrapper, name):
 
+    assert isinstance(cfg, DictConfig)
+
     # create an agent
     agent = agent_wrapper()
 
@@ -231,11 +236,11 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
     tstart = time.time()
 
     # set up model save directory
-    ckpt_dir = Path(cfg["checkpoint_dir"]) / name
+    ckpt_dir = Path(cfg.checkpoint_dir) / name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    vid_dir = Path(cfg["video_dir"]) / name
-    if cfg["record"]:
+    vid_dir = Path(cfg.video_dir) / name
+    if cfg.record:
         vid_dir.mkdir(parents=True, exist_ok=True)
 
     # save the model as a dry run, to avoid bad surprises at the end
@@ -248,13 +253,15 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
     # set up wandb
     while True:
         try:
+            config = OmegaConf.to_object(cfg)
+            assert isinstance(config, dict)
             wandb.init(
-                project=cfg["wandb_project"],
+                project=cfg.wandb_project,
                 name=name,
                 id=name,
                 group=group,
-                config=cfg,
-                dir=cfg["root"],
+                config=config,
+                dir=cfg.root,
             )
             break
         except CommError:
@@ -269,27 +276,27 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
 
     # create rollout generator for training the agent
-    roll_gen = rollout(env, agent, cfg["seed"], cfg["rollout_len"])
+    roll_gen = rollout(env, agent, cfg.seed, cfg.rollout_len)
     # create episode generator for evaluating the agent
-    eval_seed = cfg["seed"] + 123456  # arbitrary choice
+    eval_seed = cfg.seed + 123456  # arbitrary choice
     ep_gen = episode(eval_env, agent, eval_seed)
 
     i = 0
 
-    while agent.timesteps_so_far <= cfg["num_timesteps"]:
+    while agent.timesteps_so_far <= cfg.num_timesteps:
 
         if i % 100 == 0 or DEBUG:
-            log_iter_info(i, cfg["num_timesteps"] // cfg["rollout_len"], tstart)
+            log_iter_info(i, cfg.num_timesteps // cfg.rollout_len, tstart)
 
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned rollout, stored in buffer
-            agent.timesteps_so_far += cfg["rollout_len"]
+            agent.timesteps_so_far += cfg.rollout_len
 
         with timed("training"):
-            for _ in range(cfg["training_steps_per_iter"]):
+            for _ in range(cfg.training_steps_per_iter):
 
                 if agent.param_noise is not None:
-                    if agent.actr_updates_so_far % cfg["pn_adapt_frequency"] == 0:
+                    if agent.actr_updates_so_far % cfg.pn_adapt_frequency == 0:
                         # adapt parameter noise
                         agent.adapt_param_noise()
                         agent.send_to_dash(
@@ -304,7 +311,7 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
                     batch = agent.sample_batch()
                     # determine if updating the actr
                     update_actr = not bool(
-                        agent.crit_updates_so_far % cfg["actor_update_delay"])
+                        agent.crit_updates_so_far % cfg.actor_update_delay)
                     # update the actor and critic
                     agent.update_actr_crit(
                         batch=batch,
@@ -319,13 +326,13 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
 
         i += 1
 
-        if i % cfg["eval_every"] == 0:
+        if i % cfg.eval_every == 0:
 
             with timed("evaluating"):
 
                 len_buff, env_ret_buff = [], []
 
-                for j in range(cfg["eval_steps_per_iter"]):
+                for j in range(cfg.eval_steps_per_iter):
 
                     # sample an episode with non-perturbed actor
                     ep = next(ep_gen)
@@ -334,7 +341,7 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
                     len_buff.append(ep["ep_len"])
                     env_ret_buff.append(ep["ep_env_ret"])
 
-                    if cfg["record"]:
+                    if cfg.record:
                         # record a video of the episode
                         # ref: https://younis.dev/blog/render-api/
                         frame_collection = eval_env.render()
