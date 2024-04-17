@@ -9,6 +9,8 @@ import random
 import numpy as np
 import torch
 
+from gymnasium.core import Env
+
 import orchestrator
 from helpers import logger
 from helpers.env_makers import make_env
@@ -187,6 +189,7 @@ class MagicRunner(object):
             record=self._cfg.record,
             render=self._cfg.render,
         )
+        assert isinstance(eval_env, Env), "no vecenv allowed here"
 
         # train
         orchestrator.learn(
@@ -233,6 +236,7 @@ class MagicRunner(object):
             record=self._cfg.record,
             render=self._cfg.render,
         )
+        assert isinstance(env, Env), "no vecenv allowed here"
 
         # create an agent wrapper
         def agent_wrapper():

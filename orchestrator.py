@@ -2,6 +2,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from functools import partial
+from typing import Union, List, Any, Callable
 
 from omegaconf import OmegaConf, DictConfig
 import wandb
@@ -16,12 +17,18 @@ from gymnasium.experimental.vector.sync_vector_env import SyncVectorEnv
 from helpers import logger
 from helpers.misc_util import timed, log_iter_info
 from helpers.opencv_util import record_video
+from agents.spp_agent import SPPAgent
 
 
 DEBUG = False
 
 
-def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is an api nightmare
+def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
+            agent: SPPAgent,
+            seed: int,
+            segment_len: int,
+            *,
+            wrap_absorb: bool):
 
     assert isinstance(env.action_space, gym.spaces.Box)  # to ensure `high` and `low` exist
     ac_low, ac_high = env.action_space.low, env.action_space.high
@@ -59,7 +66,7 @@ def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is
         else:
             assert isinstance(env, Env)
             pp_func = postproc_tr
-        pp_func(tr_or_vtr, agent, wrap_absorb)
+        pp_func(tr_or_vtr, agent, wrap_absorb=wrap_absorb)
 
         # set current state with the next
         ob = deepcopy(new_ob)
@@ -72,7 +79,10 @@ def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is
         t += 1
 
 
-def postproc_tr(tr, agent, wrap_absorb):
+def postproc_tr(tr: List[Any],
+                agent: SPPAgent,
+                *,
+                wrap_absorb: bool):
 
     ob, ac, new_ob, done, terminated = tr
 
@@ -143,16 +153,25 @@ def postproc_tr(tr, agent, wrap_absorb):
         agent.store_transition(transition)
 
 
-def postproc_vtr(n, vtr, agent, wrap_absorb):
-    for i in range(n):
+def postproc_vtr(num_envs: int,
+                 vtr: List[Any],
+                 agent: SPPAgent,
+                 *,
+                 wrap_absorb: bool):
+    for i in range(num_envs):
         tr = [e[i] for e in vtr]
-        postproc_tr(tr, agent, wrap_absorb)
+        postproc_tr(tr, agent, wrap_absorb=wrap_absorb)
 
 
-def episode(env, agent, seed):
+def episode(env: Env,
+            agent: SPPAgent,
+            seed: int):
     # generator that spits out a trajectory collected during a single episode
     # `append` operation is also significantly faster on lists than numpy arrays,
     # they will be converted to numpy arrays once complete right before the yield
+
+    assert isinstance(env.action_space, gym.spaces.Box)  # to ensure `high` and `low` exist
+    ac_low, ac_high = env.action_space.low, env.action_space.high
 
     rng = np.random.default_rng(seed)  # aligned on seed, so always reproducible
     logger.warn("remember: in episode generator, we generate a seed randomly")
@@ -172,7 +191,7 @@ def episode(env, agent, seed):
         ac = agent.predict(ob, apply_noise=False)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
-        ac = np.clip(ac, env.action_space.low, env.action_space.high)
+        ac = np.clip(ac, ac_low, ac_high)
 
         obs.append(ob)
         acs.append(ac)
@@ -181,6 +200,7 @@ def episode(env, agent, seed):
 
         env_rews.append(env_rew)
         cur_ep_len += 1
+        assert isinstance(env_rew, float)  # quiets the type-checker
         cur_ep_env_ret += env_rew
         ob = deepcopy(new_ob)
 
@@ -207,7 +227,10 @@ def episode(env, agent, seed):
             ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
 
 
-def evaluate(cfg, env, agent_wrapper, name):
+def evaluate(cfg: DictConfig,
+             env: Env,
+             agent_wrapper: Callable[[], SPPAgent],
+             name: str):
 
     assert isinstance(cfg, DictConfig)
 
@@ -256,7 +279,11 @@ def evaluate(cfg, env, agent_wrapper, name):
     logger.dump_tabular()
 
 
-def learn(cfg, env, eval_env, agent_wrapper, name):
+def learn(cfg: DictConfig,
+          env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
+          eval_env: Env,
+          agent_wrapper: Callable[[], SPPAgent],
+          name: str):
 
     assert isinstance(cfg, DictConfig)
 
@@ -307,7 +334,7 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
 
     # create segment generator for training the agent
-    roll_gen = segment(env, agent, cfg.seed, cfg.segment_len, cfg.wrap_absorb)
+    roll_gen = segment(env, agent, cfg.seed, cfg.segment_len, wrap_absorb=cfg.wrap_absorb)
     # create episode generator for evaluating the agent
     eval_seed = cfg.seed + 123456  # arbitrary choice
     ep_gen = episode(eval_env, agent, eval_seed)

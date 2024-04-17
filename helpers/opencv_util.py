@@ -9,7 +9,7 @@ import cv2
 from helpers import logger
 
 
-def record_video(save_dir: str, name: str, obs: npt.NDArray):
+def record_video(save_dir: Path, name: str, obs: npt.NDArray):
     """Record a video from samples collected at evalutation time."""
     # unstack the frames if stacked, while leaving colors unaltered
     frames = np.split(obs, 1, axis=-1)
@@ -23,7 +23,7 @@ def record_video(save_dir: str, name: str, obs: npt.NDArray):
                  obs.shape[-3])
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(
-        filename=f"{Path(save_dir) / vname}.mp4",
+        filename=f"{save_dir / vname}.mp4",
         fourcc=fourcc,
         fps=25,
         frameSize=frame_size,
