@@ -141,6 +141,8 @@ def make_farama_mujoco_env(
         np.abs(np.amax(ac_space.high.astype("float32"))),
         np.abs(np.amin(ac_space.low.astype("float32"))),
     )
+    # despite the fact that we use the max, the actions are clipped with min and max
+    # during interaction in the orchestrator
 
     # max episode length
     # use to be needed to determine the nature of termination in env

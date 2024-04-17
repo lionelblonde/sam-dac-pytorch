@@ -128,7 +128,7 @@ class MagicRunner(object):
             torch.backends.cudnn.deterministic = True
             device = torch.device("cuda:0")
         else:
-            if self._cfg.mps:  # TODO(lionel): add this as hp
+            if self._cfg.mps:
                 assert torch.mps
                 # use Apple"s Metal Performance Shaders (MPS)
                 device = torch.device("mps:0")

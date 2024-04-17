@@ -704,8 +704,6 @@ class SPPAgent(object):
             state = self.remove_absorbing(state)[0][:, 0:-1]
         self.pn_dist = torch.sqrt(ff.mse_loss(self.actr(state), self.apnp_actr(state)))
 
-        # self.pn_dist = self.pn_dist.cpu().data.numpy()  # TODO(lionel): remove this
-
         # adapt the parameter noise with the computed distance
         self.param_noise.adapt_std(self.pn_dist)
 

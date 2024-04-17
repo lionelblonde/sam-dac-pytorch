@@ -44,7 +44,6 @@ class RunningMoments(object):
         self.count = new_count
 
     def standardize(self, x: torch.Tensor):
-        print(x.size(), self.mean.size(), self.std.size())  # TODO(lionel): fix
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x - self.mean) / self.std
 
