@@ -7,8 +7,9 @@ class RunningMoments(object):
         """Maintain running statistics across workers leveraging Chan's method"""
         self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)
-        self.mean = torch.zeros(shape, dtype=torch.float32, device=device)
-        self.std = torch.ones(shape, dtype=torch.float32, device=device)
+        dim = shape[-1]  # TODO(lione): best we can do?
+        self.mean = torch.zeros((dim,), dtype=torch.float32, device=device)
+        self.std = torch.ones((dim,), dtype=torch.float32, device=device)
         self.device = device
 
     def update(self, x):
@@ -43,6 +44,7 @@ class RunningMoments(object):
         self.count = new_count
 
     def standardize(self, x: torch.Tensor):
+        print(x.size(), self.mean.size(), self.std.size())  # TODO(lionel): fix
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x - self.mean) / self.std
 

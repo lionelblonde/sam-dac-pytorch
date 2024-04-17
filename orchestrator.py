@@ -1,6 +1,7 @@
 import time
 from copy import deepcopy
 from pathlib import Path
+from functools import partial
 
 from omegaconf import OmegaConf, DictConfig
 import wandb
@@ -15,12 +16,12 @@ from helpers.opencv_util import record_video
 DEBUG = False
 
 
-def rollout(env, agent, seed, rollout_len):
+def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is an api nightmare
+
+    is_vector_env = hasattr(env, "num_envs")
 
     t = 0
-    # reset agent noise process
-    agent.reset_noise()
-    # reset agent env
+
     ob, _ = env.reset(seed=seed)  # seed is a keyword argument, not positional
 
     while True:
@@ -31,91 +32,110 @@ def rollout(env, agent, seed, rollout_len):
         ac = np.nan_to_num(ac)
         ac = np.clip(ac, env.action_space.low, env.action_space.high)
 
-        if t > 0 and t % rollout_len == 0:
+        if t > 0 and t % segment_len == 0:
             yield
 
         # interact with env
-        new_ob, _, terminated, truncated, _ = env.step(ac)
-        done = terminated or truncated  # read about what truncation means at the link below:
-        # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
-        if truncated and env._elapsed_steps != env._max_episode_steps:
-            logger.warn("termination caused by something else than time limit; out of bounds?")
-
-        if agent.hps.wrap_absorb:
-            _ob = np.append(ob, 0)
-            _ac = np.append(ac, 0)
-
-            # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
-            if terminated:
-                # wrap with an absorbing state
-                _new_ob = np.append(np.zeros(agent.ob_shape), 1)
-                _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
-                _rew = _rew.cpu().numpy().flatten().item()
-                transition = {
-                    "obs0": _ob,
-                    "acs": _ac,
-                    "obs1": _new_ob,
-                    "rews": _rew,
-                    "dones1": done,
-                    "obs0_orig": ob,
-                    "acs_orig": ac,
-                    "obs1_orig": new_ob,
-                }
-                agent.store_transition(transition)
-                # add absorbing transition
-                _ob_a = np.append(np.zeros(agent.ob_shape), 1)
-                _ac_a = np.append(np.zeros(agent.ac_shape), 1)
-                _new_ob_a = np.append(np.zeros(agent.ob_shape), 1)
-                _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None])
-                _rew_a = _rew_a.cpu().numpy().flatten().item()
-                transition_a = {
-                    "obs0": _ob_a,
-                    "acs": _ac_a,
-                    "obs1": _new_ob_a,
-                    "rews": _rew_a,
-                    "dones1": done,
-                    "obs0_orig": ob,  # from previous transition, with reward eval on absorbing
-                    "acs_orig": ac,  # from previous transition, with reward eval on absorbing
-                    "obs1_orig": new_ob,  # from previous transition, with reward eval on absorbing
-                }
-                agent.store_transition(transition_a)
-            else:
-                _new_ob = np.append(new_ob, 0)
-                _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
-                _rew = _rew.cpu().numpy().flatten().item()
-                transition = {
-                    "obs0": _ob,
-                    "acs": _ac,
-                    "obs1": _new_ob,
-                    "rews": _rew,
-                    "dones1": done,
-                    "obs0_orig": ob,
-                    "acs_orig": ac,
-                    "obs1_orig": new_ob,
-                }
-                agent.store_transition(transition)
+        new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
+        if not is_vector_env:
+            done = terminated or truncated
+            if truncated and env._elapsed_steps != env._max_episode_steps:
+                logger.warn("termination caused by something else than time limit; out of bounds?")
         else:
-            rew = agent.get_syn_rew(ob[None], ac[None], new_ob[None])
-            rew = rew.cpu().numpy().flatten().item()
-            transition = {
-                "obs0": ob,
-                "acs": ac,
-                "obs1": new_ob,
-                "rews": rew,
-                "dones1": done,
-            }
-            agent.store_transition(transition)
+            done = np.logical_or(terminated, truncated)  # might not be used but diagnostics
+        # read about what truncation means at the link below:
+        # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
+
+        tr_or_vtr = [ob, ac, new_ob, done, terminated]
+        pp_func = partial(postproc_vtr, env.num_envs) if is_vector_env else postproc_tr
+        pp_func(tr_or_vtr, agent, wrap_absorb)
 
         # set current state with the next
         ob = deepcopy(new_ob)
 
-        if done:
-            # reset agent noise process
-            agent.reset_noise()
-            # reset the env
-            ob, _ = env.reset(seed=seed)
+        if not is_vector_env:
+            # TODO(lionel): assert here that it is either an async or a sync vector env
+            if done:
+                ob, _ = env.reset(seed=seed)
 
         t += 1
+
+
+def postproc_tr(tr, agent, wrap_absorb):
+
+    ob, ac, new_ob, done, terminated = tr
+
+    if wrap_absorb:
+
+        _ob = np.append(ob, 0)
+        _ac = np.append(ac, 0)
+
+        # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
+        if terminated:
+            # wrap with an absorbing state
+            _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
+            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
+            _rew = _rew.cpu().numpy().flatten().item()
+            transition = {
+                "obs0": _ob,
+                "acs": _ac,
+                "obs1": _new_ob,
+                "rews": _rew,
+                "dones1": done,
+                "obs0_orig": ob,
+                "acs_orig": ac,
+                "obs1_orig": new_ob,
+            }
+            agent.store_transition(transition)
+            # add absorbing transition
+            _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
+            _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)  # TODO(lionel): fix -1
+            _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
+            _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None])
+            _rew_a = _rew_a.cpu().numpy().flatten().item()
+            transition_a = {
+                "obs0": _ob_a,
+                "acs": _ac_a,
+                "obs1": _new_ob_a,
+                "rews": _rew_a,
+                "dones1": done,
+                "obs0_orig": ob,  # from previous transition, with reward eval on absorbing
+                "acs_orig": ac,  # from previous transition, with reward eval on absorbing
+                "obs1_orig": new_ob,  # from previous transition, with reward eval on absorbing
+            }
+            agent.store_transition(transition_a)
+        else:
+            _new_ob = np.append(new_ob, 0)
+            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
+            _rew = _rew.cpu().numpy().flatten().item()
+            transition = {
+                "obs0": _ob,
+                "acs": _ac,
+                "obs1": _new_ob,
+                "rews": _rew,
+                "dones1": done,
+                "obs0_orig": ob,
+                "acs_orig": ac,
+                "obs1_orig": new_ob,
+            }
+            agent.store_transition(transition)
+    else:
+        rew = agent.get_syn_rew(ob[None], ac[None], new_ob[None])
+        rew = rew.cpu().numpy().flatten().item()
+        transition = {
+            "obs0": ob,
+            "acs": ac,
+            "obs1": new_ob,
+            "rews": rew,
+            "dones1": done,
+        }
+        agent.store_transition(transition)
+
+
+def postproc_vtr(n, vtr, agent, wrap_absorb):
+    for i in range(n):
+        tr = [e[i] for e in vtr]
+        postproc_tr(tr, agent, wrap_absorb)
 
 
 def episode(env, agent, seed):
@@ -138,6 +158,7 @@ def episode(env, agent, seed):
     while True:
 
         # predict action
+        print(type(env))
         ac = agent.predict(ob, apply_noise=False)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
@@ -275,8 +296,8 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
         wandb.define_metric(f"{glob}/step")
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
 
-    # create rollout generator for training the agent
-    roll_gen = rollout(env, agent, cfg.seed, cfg.rollout_len)
+    # create segment generator for training the agent
+    roll_gen = segment(env, agent, cfg.seed, cfg.segment_len, cfg.wrap_absorb)
     # create episode generator for evaluating the agent
     eval_seed = cfg.seed + 123456  # arbitrary choice
     ep_gen = episode(eval_env, agent, eval_seed)
@@ -286,11 +307,11 @@ def learn(cfg, env, eval_env, agent_wrapper, name):
     while agent.timesteps_so_far <= cfg.num_timesteps:
 
         if i % 100 == 0 or DEBUG:
-            log_iter_info(i, cfg.num_timesteps // cfg.rollout_len, tstart)
+            log_iter_info(i, cfg.num_timesteps // cfg.segment_len, tstart)
 
         with timed("interacting"):
-            next(roll_gen)  # no need to get the returned rollout, stored in buffer
-            agent.timesteps_so_far += cfg.rollout_len
+            next(roll_gen)  # no need to get the returned segment, stored in buffer
+            agent.timesteps_so_far += cfg.segment_len
 
         with timed("training"):
             for _ in range(cfg.training_steps_per_iter):

@@ -69,7 +69,7 @@ class Discriminator(nn.Module):
         self.hps = hps
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
-        if self.hps["wrap_absorb"]:
+        if self.hps.wrap_absorb:
             ob_dim += 1
             ac_dim += 1
         if self.hps["d_batch_norm"]:
@@ -103,7 +103,7 @@ class Discriminator(nn.Module):
     def forward(self, input_a, input_b):
         if self.hps["d_batch_norm"]:
             # apply normalization
-            if self.hps["wrap_absorb"]:
+            if self.hps.wrap_absorb:
                 # normalize state
                 input_a_ = input_a.clone()[:, 0:-1]
                 input_a_ = self.rms_obs.standardize(input_a_).clamp(*STANDARDIZED_OB_CLAMPS)

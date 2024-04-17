@@ -24,7 +24,7 @@ clip_norm: 40.0
 wd_scale: 0.
 
 # algorithm
-rollout_len: 2
+segment_len: 2
 batch_size: 64
 gamma: 0.99
 mem_size: 100000

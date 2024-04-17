@@ -21,7 +21,7 @@ class NormalActionNoise(ActionNoise):
         self.device = self.mu.device  # grap the device we are on (assumed sigma and mu on same)
 
     def generate(self, n: int):
-        raise ValueError(self.mu.size())
+        raise ValueError(self.mu.size())  # TODO(lionel): fix
         return torch.normal(repeat(self.mu, "d -> n d", n=n),
                             repeat(self.sigma, "d -> n d", n=n)).to(self.device)
 

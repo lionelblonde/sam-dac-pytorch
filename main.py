@@ -146,7 +146,7 @@ class MagicRunner(object):
         # env
         env, net_shapes, erb_shapes, max_ac, max_episode_steps = make_env(
             self._cfg.env_id,
-            vector=True,  # TODO(lionel): hp
+            vector=False,  # TODO(lionel): hp
             wrap_absorb=self._cfg.wrap_absorb,
             record=False,
             render=self._cfg.render,
@@ -181,7 +181,7 @@ class MagicRunner(object):
         # create an evaluation environment not to mess up with training rollouts
         eval_env, _, _, _, _ = make_env(
             self._cfg.env_id,
-            vector=True,  # TODO(lionel): hp
+            vector=False,
             wrap_absorb=self._cfg.wrap_absorb,
             record=self._cfg.record,
             render=self._cfg.render,
