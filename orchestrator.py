@@ -94,7 +94,7 @@ def postproc_tr(tr: List[Any],
         # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
         if terminated:
             # wrap with an absorbing state
-            _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
+            _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)
             _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
             _rew = _rew.cpu().numpy().flatten().item()
             transition = {
@@ -109,9 +109,9 @@ def postproc_tr(tr: List[Any],
             }
             agent.store_transition(transition)
             # add absorbing transition
-            _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
-            _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)  # TODO(lionel): fix -1
-            _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)  # TODO(lionel): fix -1
+            _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
+            _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)
+            _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
             _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None])
             _rew_a = _rew_a.cpu().numpy().flatten().item()
             transition_a = {
