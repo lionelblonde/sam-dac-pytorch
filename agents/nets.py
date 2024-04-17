@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Callable
+from typing import Tuple, Callable
 
 import torch
 from torch import nn
@@ -63,23 +63,37 @@ def snwrap(*, use_sn: bool = False) -> Callable[[nn.Module], nn.Module]:
 
 class Discriminator(nn.Module):
 
-    def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: dict, rms_obs: RunningMoments):
+    def __init__(self,
+                 ob_shape: Tuple[int],
+                 ac_shape: Tuple[int],
+                 rms_obs: RunningMoments,
+                 *,
+                 wrap_absorb: bool,
+                 d_batch_norm: bool,
+                 spectral_norm: bool,
+                 state_only: bool):
         super(Discriminator, self).__init__()
-        self.hps = hps
+        self.wrap_absorb = wrap_absorb
+        self.d_batch_norm = d_batch_norm
+        self.spectral_norm = spectral_norm
+        self.state_only = state_only
+        if self.d_batch_norm:
+            self.rms_obs = rms_obs
+        else:
+            logger.info("rms_obs not used by discriminator")
+
+        # wrap absorbing ajustments
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
-        if self.hps.wrap_absorb:
+        if self.wrap_absorb:
             ob_dim += 1
             ac_dim += 1
-        if self.hps["d_batch_norm"]:
-            self.rms_obs = rms_obs
 
-        apply_sn = snwrap(use_sn=self.hps["spectral_norm"])  # spectral normalization
+        apply_sn = snwrap(use_sn=self.spectral_norm)  # spectral normalization
 
         # define the input dimension
         in_dim = ob_dim
-        if self.hps["state_only"]:
+        if self.state_only:
             in_dim += ob_dim
         else:
             in_dim += ac_dim
@@ -101,14 +115,14 @@ class Discriminator(nn.Module):
         self.d_head.apply(init())
 
     def forward(self, input_a, input_b):
-        if self.hps["d_batch_norm"]:
+        if self.d_batch_norm:
             # apply normalization
-            if self.hps.wrap_absorb:
+            if self.wrap_absorb:
                 # normalize state
                 input_a_ = input_a.clone()[:, 0:-1]
                 input_a_ = self.rms_obs.standardize(input_a_).clamp(*STANDARDIZED_OB_CLAMPS)
                 input_a = torch.cat([input_a_, input_a[:, -1].unsqueeze(-1)], dim=-1)
-                if self.hps["state_only"]:
+                if self.state_only:
                     # normalize next state
                     input_b_ = input_b.clone()[:, 0:-1]
                     input_b_ = self.rms_obs.standardize(input_b_).clamp(*STANDARDIZED_OB_CLAMPS)
@@ -116,12 +130,12 @@ class Discriminator(nn.Module):
             else:
                 # normalize state
                 input_a = self.rms_obs.standardize(input_a).clamp(*STANDARDIZED_OB_CLAMPS)
-                if self.hps["state_only"]:
+                if self.state_only:
                     # normalize next state
                     input_b = self.rms_obs.standardize(input_b).clamp(*STANDARDIZED_OB_CLAMPS)
         else:
             input_a = input_a.clamp(*STANDARDIZED_OB_CLAMPS)
-            if self.hps["state_only"]:
+            if self.state_only:
                 input_b = input_b.clamp(*STANDARDIZED_OB_CLAMPS)
         # concatenate
         x = torch.cat([input_a, input_b], dim=-1)
@@ -131,14 +145,19 @@ class Discriminator(nn.Module):
 
 class Actor(nn.Module):
 
-    def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: dict, rms_obs: RunningMoments, max_ac: float):
+    def __init__(self,
+                 ob_shape: Tuple[int],
+                 ac_shape: Tuple[int],
+                 rms_obs: RunningMoments,
+                 max_ac: float,
+                 *,
+                 layer_norm: bool):
         super(Actor, self).__init__()
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
-        self.layer_norm = hps["layer_norm"]
         self.rms_obs = rms_obs
         self.max_ac = max_ac
+        self.layer_norm = layer_norm
 
         # assemble the last layers and output heads
         self.fc_stack = nn.Sequential(OrderedDict([
@@ -178,19 +197,31 @@ class Actor(nn.Module):
 
 class Critic(nn.Module):
 
-    def __init__(self, ob_shape: tuple[int], ac_shape: tuple[int],
-                 hps: dict, rms_obs: RunningMoments):
+    def __init__(self,
+                 ob_shape: Tuple[int],
+                 ac_shape: Tuple[int],
+                 rms_obs: RunningMoments,
+                 *,
+                 layer_norm: bool,
+                 use_c51: bool,
+                 c51_num_atoms: int,
+                 use_qr: bool,
+                 num_tau: int):
         super(Critic, self).__init__()
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
-        self.use_c51 = hps["use_c51"]
-        self.layer_norm = hps["layer_norm"]
         self.rms_obs = rms_obs
+        self.layer_norm = layer_norm
+        self.use_c51 = use_c51
+        self.c51_num_atoms = c51_num_atoms
+        self.use_qr = use_qr
+        self.num_tau = num_tau
 
+        # number of head
         if self.use_c51:
-            num_heads = hps["c51_num_atoms"]
-        elif hps["use_qr"]:
-            num_heads = hps["num_tau"]
+            num_heads = self.c51_num_atoms
+        elif self.use_qr:
+            num_heads = self.num_tau
         else:
             num_heads = 1
 

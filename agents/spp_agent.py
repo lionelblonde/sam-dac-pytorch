@@ -91,11 +91,17 @@ class SPPAgent(object):
             self.rms_ret = RunningMoments(shape=(1,), device=self.device)
 
         # create online and target nets
-        net_args = [self.ob_shape, self.ac_shape, self.hps, self.rms_obs, self.max_ac]
-        self.actr = Actor(*net_args).to(self.device)
-        self.targ_actr = Actor(*net_args).to(self.device)
-        self.crit = Critic(*net_args[:-1]).to(self.device)  # just not using the max ac
-        self.targ_crit = Critic(*net_args[:-1]).to(self.device)
+
+        actr_net_args = [self.ob_shape, self.ac_shape, self.rms_obs, self.max_ac]
+        actr_net_kwargs = {"layer_norm": self.hps.layer_norm}
+        self.actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
+        self.targ_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
+
+        crit_net_args = [self.ob_shape, self.ac_shape, self.rms_obs]
+        crit_net_kwargs_keys = ["layer_norm", "use_c51", "c51_num_atoms", "use_qr", "num_tau"]
+        crit_net_kwargs = {k: getattr(self.hps, k) for k in crit_net_kwargs_keys}
+        self.crit = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
+        self.targ_crit = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
 
         # initilize the target nets
         self.targ_actr.load_state_dict(self.actr.state_dict())
@@ -104,16 +110,16 @@ class SPPAgent(object):
         if self.hps.clipped_double:
             # create second ("twin") critic and target critic
             # ref: TD3, https://arxiv.org/abs/1802.09477
-            self.twin = Critic(*net_args[:-1]).to(self.device)
-            self.targ_twin = Critic(*net_args[:-1]).to(self.device)
+            self.twin = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
+            self.targ_twin = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
             self.targ_twin.load_state_dict(self.twin.state_dict())
 
         if self.param_noise is not None:
             # create parameter-noise-perturbed ("pnp") actor
-            self.pnp_actr = Actor(*net_args).to(self.device)
+            self.pnp_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
             self.pnp_actr.load_state_dict(self.actr.state_dict())
             # create adaptive-parameter-noise-perturbed ("apnp") actor
-            self.apnp_actr = Actor(*net_args).to(self.device)
+            self.apnp_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
             self.apnp_actr.load_state_dict(self.actr.state_dict())
 
         # set up the optimizers
@@ -147,7 +153,10 @@ class SPPAgent(object):
             )
             assert len(self.e_dataloader) > 0
             # create discriminator and its optimizer
-            self.disc = Discriminator(*net_args[:-1]).to(self.device)
+            disc_net_args = [self.ob_shape, self.ac_shape, self.rms_obs]  # for flexibility
+            disc_net_kwargs_keys = ["wrap_absorb", "d_batch_norm", "spectral_norm", "state_only"]
+            disc_net_kwargs = {k: getattr(self.hps, k) for k in disc_net_kwargs_keys}
+            self.disc = Discriminator(*disc_net_args, **disc_net_kwargs).to(self.device)
             self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps.d_lr)
 
         log_module_info(self.actr)
@@ -251,7 +260,6 @@ class SPPAgent(object):
             # apply additive action noise once the action has been predicted,
             # in combination with parameter noise, or not.
             noise = self.ac_noise.generate()
-            print(ac.size(), noise.size())
             ac += noise
 
         # place on cpu and collapse into one dimension
