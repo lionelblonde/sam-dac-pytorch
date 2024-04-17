@@ -16,7 +16,7 @@ from helpers.dataset import DictDataset, DemoDataset
 from helpers.math_util import huber_quant_reg_loss
 from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.param_noise import AdaptiveParamNoise
-from agents.ac_noise import NormalActionNoise, OUActionNoise
+from agents.ac_noise import NormalActionNoise
 from agents.memory import ReplayBuffer
 
 
@@ -190,15 +190,8 @@ class SPPAgent(object):
                 _, std = cnt.split("_")
                 # spherical (isotropic) gaussian action noise
                 mu = torch.zeros(self.ac_shape).to(self.device)
-                sigma = float(std) * torch.ones(self.ob_shape[0], self.ac_shape[-1]).to(self.device)
-                ac_noise = NormalActionNoise(mu=mu, sigma=sigma)
-                logger.info(f"{ac_noise} configured")
-            elif "ou" in cnt:
-                _, std = cnt.split("_")
-                # Ornstein-Uhlenbeck action noise
-                mu = torch.zeros(self.ac_shape).to(self.device)
                 sigma = float(std) * torch.ones(self.ac_shape).to(self.device)
-                ac_noise = OUActionNoise(mu=mu, sigma=sigma)
+                ac_noise = NormalActionNoise(mu=mu, sigma=sigma)
                 logger.info(f"{ac_noise} configured")
             else:
                 raise RuntimeError(f"unknown noise type: {cnt}")
@@ -207,9 +200,9 @@ class SPPAgent(object):
     def store_transition(self, transition):
         """Store the transition in memory and update running moments"""
         assert self.replay_buffer is not None
-        # Store transition in the replay buffer
+        # store transition in the replay buffer
         self.replay_buffer.append(transition)
-        # Update the observation normalizer
+        # update the observation normalizer
         _state = transition["obs0"]
         if self.hps.wrap_absorb:
             if np.all(np.equal(_state, np.append(np.zeros_like(_state[0:-1]), 1.))):
@@ -262,7 +255,7 @@ class SPPAgent(object):
             ac += noise
 
         # place on cpu and collapse into one dimension
-        ac = ac.cpu().detach().numpy() #.flatten()  # TODO(lionel): fix
+        ac = ac.cpu().detach().numpy()
 
         return ac.clip(-self.max_ac, self.max_ac)
 

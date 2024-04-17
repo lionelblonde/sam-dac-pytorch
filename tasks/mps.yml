@@ -28,7 +28,7 @@ segment_len: 2
 batch_size: 64
 gamma: 0.99
 mem_size: 100000
-noise_type: "adaptive-param_0.2, ou_0.2"
+noise_type: "adaptive-param_0.2, normal_0.2"
 pn_adapt_frequency: 50
 polyak: 0.005
 targ_up_freq: 100
