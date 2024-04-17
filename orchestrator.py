@@ -65,7 +65,6 @@ def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is
 
         if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             assert isinstance(env, Env)
-            # TODO(lionel): assert here that it is either an async or a sync vector env
             if done:
                 ob, _ = env.reset(seed=seed)
 
