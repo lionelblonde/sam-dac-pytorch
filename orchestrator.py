@@ -8,6 +8,11 @@ import wandb
 from wandb.errors import CommError
 import numpy as np
 
+import gymnasium as gym
+from gymnasium.core import Env
+from gymnasium.experimental.vector.async_vector_env import AsyncVectorEnv
+from gymnasium.experimental.vector.sync_vector_env import SyncVectorEnv
+
 from helpers import logger
 from helpers.misc_util import timed, log_iter_info
 from helpers.opencv_util import record_video
@@ -17,8 +22,6 @@ DEBUG = False
 
 
 def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is an api nightmare
-
-    is_vector_env = hasattr(env, "num_envs")
 
     t = 0
 
@@ -30,30 +33,38 @@ def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is
         ac = agent.predict(ob, apply_noise=True)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
-        ac = np.clip(ac, env.action_space.low, env.action_space.high)
+        ac_space = env.action_space
+        assert isinstance(ac_space, gym.spaces.Box)  # to ensure `high` and `low` exist
+        ac = np.clip(ac, ac_space.low, ac_space.high)
 
         if t > 0 and t % segment_len == 0:
             yield
 
         # interact with env
         new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
-        if not is_vector_env:
+        if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
+            assert isinstance(env, Env)
             done = terminated or truncated
-            if truncated and env._elapsed_steps != env._max_episode_steps:
-                logger.warn("termination caused by something else than time limit; out of bounds?")
+            if truncated:
+                logger.warn("termination caused by something like time limit or out of bounds?")
         else:
             done = np.logical_or(terminated, truncated)  # might not be used but diagnostics
         # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
 
         tr_or_vtr = [ob, ac, new_ob, done, terminated]
-        pp_func = partial(postproc_vtr, env.num_envs) if is_vector_env else postproc_tr
+        if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
+            pp_func = partial(postproc_vtr, env.num_envs)
+        else:
+            assert isinstance(env, Env)
+            pp_func = postproc_tr
         pp_func(tr_or_vtr, agent, wrap_absorb)
 
         # set current state with the next
         ob = deepcopy(new_ob)
 
-        if not is_vector_env:
+        if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
+            assert isinstance(env, Env)
             # TODO(lionel): assert here that it is either an async or a sync vector env
             if done:
                 ob, _ = env.reset(seed=seed)
@@ -158,7 +169,6 @@ def episode(env, agent, seed):
     while True:
 
         # predict action
-        print(type(env))
         ac = agent.predict(ob, apply_noise=False)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
