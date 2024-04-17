@@ -23,6 +23,9 @@ DEBUG = False
 
 def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is an api nightmare
 
+    assert isinstance(env.action_space, gym.spaces.Box)  # to ensure `high` and `low` exist
+    ac_low, ac_high = env.action_space.low, env.action_space.high
+
     t = 0
 
     ob, _ = env.reset(seed=seed)  # seed is a keyword argument, not positional
@@ -33,9 +36,7 @@ def segment(env, agent, seed, segment_len, wrap_absorb):  # using typing here is
         ac = agent.predict(ob, apply_noise=True)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
-        ac_space = env.action_space
-        assert isinstance(ac_space, gym.spaces.Box)  # to ensure `high` and `low` exist
-        ac = np.clip(ac, ac_space.low, ac_space.high)
+        ac = np.clip(ac, ac_low, ac_high)
 
         if t > 0 and t % segment_len == 0:
             yield
