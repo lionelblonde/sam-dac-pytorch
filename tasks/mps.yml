@@ -3,6 +3,10 @@ cuda: false
 fp16: false
 mps: true
 
+# env
+vecenv: true
+numenv: 8
+
 # logging
 wandb_project: "damnlemons"
 record: false
