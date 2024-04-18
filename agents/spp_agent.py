@@ -286,11 +286,11 @@ class SPPAgent(object):
 
             # compute qz estimate
             z = self.crit(state, action).unsqueeze(-1)
-            z.clamp_(0.01, 0.99)
+            z.clamp(0.01, 0.99)
 
             # compute target qz estimate
             z_prime = self.targ_crit(next_state, next_action)
-            z_prime.clamp_(0.01, 0.99)
+            z_prime.clamp(0.01, 0.99)
 
             gamma_mask = ((self.hps.gamma ** td_len) * (1 - done))
             tz = reward + (gamma_mask * self.c51_supp.view(1, self.hps.c51_num_atoms))
