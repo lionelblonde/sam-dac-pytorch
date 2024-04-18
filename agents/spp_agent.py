@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 from omegaconf import DictConfig
+from einops import repeat, rearrange
 import wandb
 import numpy as np
 import torch
@@ -285,20 +286,30 @@ class SPPAgent(object):
         if self.hps.use_c51:
 
             # compute qz estimate
-            z = self.crit(state, action).unsqueeze(-1)
+            z = self.crit(state, action)  # shape: [batch_size, c51_num_atoms]
+            z = rearrange(z, "b n -> b n 1")  # equivalent to unsqueeze(-1)
             z.clamp(0.01, 0.99)
 
             # compute target qz estimate
             z_prime = self.targ_crit(next_state, next_action)
+            # `z_prime` is shape [batch_size, c51_num_atoms]
             z_prime.clamp(0.01, 0.99)
 
+            reward = repeat(reward, "b 1 -> b n", n=self.hps.c51_num_atoms)
             gamma_mask = ((self.hps.gamma ** td_len) * (1 - done))
-            tz = reward + (gamma_mask * self.c51_supp.view(1, self.hps.c51_num_atoms))
+            c51_supp = rearrange(self.c51_supp, "n -> 1 n", n=self.hps.c51_num_atoms)
+            # `reward` has shape [batch_size, c51_num_atoms]
+            # `gamma_mask` is shape [batch_size, 1]
+            # `c51_supp` is shape [1, c51_num_atoms]
+            # the prod of the two latter broadcast into [batch_size, c51_num_atoms]
+            # `tz` is shape [batch_size, c51_num_atoms]
+            tz = reward + (gamma_mask * c51_supp)
             tz = tz.clamp(self.hps.c51_vmin, self.hps.c51_vmax)
+
             b = (tz - self.hps.c51_vmin) / self.c51_delta
             l = b.floor().long()  # noqa
             u = b.ceil().long()
-            targ_z = z_prime.clone().zero_()
+            targ_z = torch.zeros_like(z_prime)  # shape: [batch_size, c51_num_atoms]
             z_prime_l = z_prime * (u + (l == u).float() - b)
             z_prime_u = z_prime * (b - l.float())
             for i in range(targ_z.size(0)):
@@ -306,7 +317,8 @@ class SPPAgent(object):
                 targ_z[i].index_add_(0, u[i], z_prime_u[i])
 
             # reshape target to be of shape [batch_size, c51_num_atoms, 1]
-            targ_z = targ_z.view(-1, self.hps.c51_num_atoms, 1)
+            targ_z = rearrange(targ_z, "b n -> b n 1")  # equivalent to unsqueeze(-1)
+            # z and targ_z now have the same shape
 
             # critic loss
             ce_losses = -(targ_z.detach() * torch.log(z)).sum(dim=1)
@@ -314,26 +326,31 @@ class SPPAgent(object):
 
             # actor loss
             actr_loss = -self.crit(state, self.actr(state))  # [batch_size, num_atoms]
-            actr_loss = actr_loss.matmul(self.c51_supp).unsqueeze(-1)  # [batch_size, 1]
-            actr_loss = actr_loss.mean()
+            # we matmul by the transpose of rearranged `c51_supp` of shape [1, c51_num_atoms]
+            actr_loss = actr_loss.matmul(c51_supp.t())  # resulting shape: [batch_size, 1]
 
         elif self.hps.use_qr:
 
-            # compute qz estimate
-            z = self.crit(state, action).unsqueeze(-1)
+            # compute qz estimate, shape: [batch_size, num_tau]
+            z = self.crit(state, action)
+            z = rearrange(z, "b n -> b n 1")  # equivalent to unsqueeze(-1)
 
-            # compute target qz estimate
+            # compute target qz estimate, shape: [batch_size, num_tau]
             z_prime = self.targ_crit(next_state, next_action)
 
+            # `reward` has shape [batch_size, 1]
             # reshape rewards to be of shape [batch_size x num_tau, 1]
-            reward = reward.repeat(self.hps.num_tau, 1)
+            reward = repeat(reward, "b 1 -> (b n) 1", n=self.hps.num_tau)
             # reshape product of gamma and mask to be of shape [batch_size x num_tau, 1]
-            gamma_mask = ((self.hps.gamma ** td_len) * (1 - done)).repeat(
-                self.hps.num_tau, 1)
-            z_prime = z_prime.view(-1, 1)
+            gamma_mask = repeat(
+                (self.hps.gamma ** td_len) * (1 - done), "b 1 -> (b n) 1", n=self.hps.num_tau)
+            # like mask and reward, make `z_prime` of shape [batch_size x num_tau, 1]
+            z_prime = rearrange(z_prime, "b n -> (b n) 1")
+            # assemble the 3 elements of shape [batch_size x num_tau, 1]
             targ_z = reward + (gamma_mask * z_prime)
             # reshape target to be of shape [batch_size, num_tau, 1]
-            targ_z = targ_z.view(-1, self.hps.num_tau, 1)
+            targ_z = rearrange(targ_z, "(b n) 1 -> b n 1",
+                               b=self.hps.batch_size, n=self.hps.num_tau)
 
             # critic loss
             # compute the TD error loss
@@ -383,7 +400,9 @@ class SPPAgent(object):
             twin_loss = ff.smooth_l1_loss(twin_q, targ_q)  # overwrites the None initially set
 
             # actor loss
-            actr_loss = -self.crit(state, self.actr(state)).mean()
+            actr_loss = -self.crit(state, self.actr(state))
+
+        actr_loss = actr_loss.mean()
 
         return actr_loss, crit_loss, twin_loss
 
@@ -634,8 +653,8 @@ class SPPAgent(object):
         input_b = input_b.to(self.device)
 
         # compure score
-        score = self.disc(input_a, input_b).detach().view(-1, 1)
-        # counterpart of GAN"s minimax (also called "saturating") loss
+        score = self.disc(input_a, input_b).detach()
+        # counterpart of GAN's minimax (also called "saturating") loss
         # numerics: 0 for non-expert-like states, goes to +inf for expert-like states
         # compatible with envs with traj cutoffs for bad (non-expert-like) behavior
         # e.g. walking simulations that get cut off when the robot falls over
