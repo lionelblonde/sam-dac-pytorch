@@ -2,14 +2,16 @@ import sys
 from pathlib import Path
 import hashlib
 import time
+
 import numpy as np
-import numpy.typing as npt
 import cv2
+from beartype import beartype
 
 from helpers import logger
 
 
-def record_video(save_dir: Path, name: str, obs: npt.NDArray):
+@beartype
+def record_video(save_dir: Path, name: str, obs: np.ndarray):
     """Record a video from samples collected at evalutation time."""
     # unstack the frames if stacked, while leaving colors unaltered
     frames = np.split(obs, 1, axis=-1)
@@ -44,6 +46,7 @@ def record_video(save_dir: Path, name: str, obs: npt.NDArray):
 class OpenCVImageViewer(object):
     """Viewer used to render simulations."""
 
+    @beartype
     def __init__(self, *, q_to_exit=True):
         self._q_to_exit = q_to_exit
         # create unique identifier
@@ -54,10 +57,12 @@ class OpenCVImageViewer(object):
         cv2.namedWindow(self._window_name, cv2.WINDOW_AUTOSIZE)
         self._isopen = True
 
+    @beartype
     def __del__(self):
         cv2.destroyWindow(self._window_name)
         self._isopen = False
 
+    @beartype
     def imshow(self, img):
         # convert image to BGR format
         cv2.imshow(self._window_name, img[:, :, [2, 1, 0]])
@@ -65,9 +70,11 @@ class OpenCVImageViewer(object):
         if cv2.waitKey(1) == ord("q") and self._q_to_exit:
             sys.exit()
 
+    @beartype
     @property
     def isopen(self):
         return self._isopen
 
+    @beartype
     def close(self):
         pass

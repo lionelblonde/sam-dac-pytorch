@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from beartype import beartype
 import fire
 from omegaconf import OmegaConf, DictConfig
 import random
@@ -22,7 +23,8 @@ from agents.spp_agent import SPPAgent
 DISABLE_LOGGER = False
 
 
-def make_uuid(num_syllables=2, num_parts=3):
+@beartype
+def make_uuid(num_syllables: int = 2, num_parts: int = 3) -> str:
     """Randomly create a semi-pronounceable uuid"""
     part1 = ["s", "t", "r", "ch", "b", "c", "w", "z", "h", "k", "p", "ph", "sh", "f", "fr"]
     part2 = ["a", "oo", "ee", "e", "u", "er"]
@@ -38,7 +40,8 @@ def make_uuid(num_syllables=2, num_parts=3):
     return result
 
 
-def get_name(uuid, env_id, seed):
+@beartype
+def get_name(uuid: str, env_id: str, seed: int) -> str:
     """Assemble long experiment name"""
     name = uuid
     try:
@@ -54,6 +57,7 @@ def get_name(uuid, env_id, seed):
 
 class MagicRunner(object):
 
+    @beartype
     def __init__(self, cfg: str,  # give the relative path to cfg here
                  env_id: str,  # never in cfg: always give one in arg
                  seed: int,  # never in cfg: always give one in arg
@@ -101,6 +105,7 @@ class MagicRunner(object):
         # set the cfg to read-only for safety
         OmegaConf.set_readonly(self._cfg, value=True)
 
+    @beartype
     def train(self):
 
         # mlsys
@@ -204,6 +209,7 @@ class MagicRunner(object):
         env.close()
         eval_env.close()
 
+    @beartype
     def evaluate(self):
 
         # mlsys

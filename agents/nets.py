@@ -1,6 +1,7 @@
 from collections import OrderedDict
-from typing import Tuple, Callable
+from typing import Callable
 
+from beartype import beartype
 import torch
 from torch import nn
 from torch.nn import functional as ff
@@ -13,6 +14,7 @@ from helpers.normalizer import RunningMoments
 STANDARDIZED_OB_CLAMPS = [-5., 5.]
 
 
+@beartype
 def log_module_info(model: nn.Module):
 
     def _fmt(n) -> str:
@@ -30,6 +32,7 @@ def log_module_info(model: nn.Module):
     logger.info(f"total trainable params: {_fmt(num_params)}.")
 
 
+@beartype
 def init(constant_bias: float = 0.) -> Callable[[nn.Module], None]:
     """Perform orthogonal initialization"""
 
@@ -47,6 +50,7 @@ def init(constant_bias: float = 0.) -> Callable[[nn.Module], None]:
     return _init
 
 
+@beartype
 def snwrap(*, use_sn: bool = False) -> Callable[[nn.Module], nn.Module]:
     """Spectral normalization wrapper"""
 
@@ -63,9 +67,10 @@ def snwrap(*, use_sn: bool = False) -> Callable[[nn.Module], nn.Module]:
 
 class Discriminator(nn.Module):
 
+    @beartype
     def __init__(self,
-                 ob_shape: Tuple[int],
-                 ac_shape: Tuple[int],
+                 ob_shape: tuple[int, ...],
+                 ac_shape: tuple[int, ...],
                  rms_obs: RunningMoments,
                  *,
                  wrap_absorb: bool,
@@ -114,6 +119,7 @@ class Discriminator(nn.Module):
         self.fc_stack.apply(init())
         self.d_head.apply(init())
 
+    @beartype
     def forward(self, input_a, input_b):
         if self.d_batch_norm:
             # apply normalization
@@ -145,9 +151,10 @@ class Discriminator(nn.Module):
 
 class Actor(nn.Module):
 
+    @beartype
     def __init__(self,
-                 ob_shape: Tuple[int],
-                 ac_shape: Tuple[int],
+                 ob_shape: tuple[int, ...],
+                 ac_shape: tuple[int, ...],
                  rms_obs: RunningMoments,
                  max_ac: float,
                  *,
@@ -181,15 +188,18 @@ class Actor(nn.Module):
         self.a_fc_stack.apply(init())
         self.a_head.apply(init())
 
+    @beartype
     def forward(self, ob):
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x = self.fc_stack(ob)
         return float(self.max_ac) * torch.tanh(self.a_head(self.a_fc_stack(x)))
 
+    @beartype
     @property
     def perturbable_params(self):
         return [n for n, _ in self.named_parameters() if "ln" not in n]
 
+    @beartype
     @property
     def non_perturbable_params(self):
         return [n for n, _ in self.named_parameters() if "ln" in n]
@@ -197,9 +207,10 @@ class Actor(nn.Module):
 
 class Critic(nn.Module):
 
+    @beartype
     def __init__(self,
-                 ob_shape: Tuple[int],
-                 ac_shape: Tuple[int],
+                 ob_shape: tuple[int, ...],
+                 ac_shape: tuple[int, ...],
                  rms_obs: RunningMoments,
                  *,
                  layer_norm: bool,
@@ -244,6 +255,7 @@ class Critic(nn.Module):
         self.fc_stack.apply(init())
         self.head.apply(init())
 
+    @beartype
     def forward(self, ob, ac):
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x = torch.cat([ob, ac], dim=-1)

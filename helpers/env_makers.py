@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
-from typing import Tuple, Dict, Union, Optional
+from typing import Union, Optional
 
 import numpy as np
+from beartype import beartype
 
 import gymnasium as gym
 from gymnasium.core import Env
@@ -13,6 +14,7 @@ from helpers import logger
 import environments
 
 
+@beartype
 def get_benchmark(env_id: str):
     # verify that the specified env is amongst the admissible ones
     benchmark = None
@@ -26,6 +28,7 @@ def get_benchmark(env_id: str):
     return benchmark
 
 
+@beartype
 def make_env(
     env_id: str,
     *,
@@ -34,8 +37,8 @@ def make_env(
     wrap_absorb: bool,
     record: bool,
     render: bool,
-    ) -> Tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
-    Dict[str, Tuple[int]], Dict[str, Tuple[int]], float, int]:
+    ) -> tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
+    dict[str, tuple[int, ...]], dict[str, tuple[int, ...]], float, int]:
 
     # create an environment
     bench = get_benchmark(env_id)  # at this point benchmark is valid
@@ -61,6 +64,7 @@ def make_env(
     raise ValueError(f"invalid benchmark: {bench}")
 
 
+@beartype
 def make_farama_mujoco_env(
     env_id: str,
     *,
@@ -69,8 +73,8 @@ def make_farama_mujoco_env(
     wrap_absorb: bool,
     record: bool,
     render: bool,
-    ) -> Tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
-    Dict[str, Tuple[int]], Dict[str, Tuple[int]], float, int]:
+    ) -> tuple[Union[Env, AsyncVectorEnv, SyncVectorEnv],
+    dict[str, tuple[int, ...]], dict[str, tuple[int, ...]], float, int]:
 
     # not ideal for code golf, but clearer for debug
 
@@ -140,7 +144,7 @@ def make_farama_mujoco_env(
     max_ac = max(
         np.abs(np.amax(ac_space.high.astype("float32"))),
         np.abs(np.amin(ac_space.low.astype("float32"))),
-    )
+    ).item()  # return it not as an ndarray but a standard Python scalar
     # despite the fact that we use the max, the actions are clipped with min and max
     # during interaction in the orchestrator
 

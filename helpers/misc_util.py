@@ -2,9 +2,12 @@ import time
 from enum import IntEnum
 from contextlib import contextmanager
 
+from beartype import beartype
+
 from helpers import logger
 
 
+@beartype
 def prettify_time(seconds: int):
     """Print the number of seconds in human-readable format.
     e.g. "2 days", "2 hours and 37 minutes", "less than a minute".
@@ -50,6 +53,7 @@ class Colors(IntEnum):
     CRIMSON = 38
 
 
+@beartype
 def colorize(string: str, color: Colors, *, bold=False, highlight=False) -> str:
     attr = []
     num: int = Colors[color.name]
@@ -60,6 +64,7 @@ def colorize(string: str, color: Colors, *, bold=False, highlight=False) -> str:
     return f"\x1b[{attr}m{string}\x1b[0m"
 
 
+@beartype
 @contextmanager
 def timed(text: str):
     pre_mess = f"::{text}::"
@@ -71,6 +76,7 @@ def timed(text: str):
     logger.info(colorize(post_mess, Colors.CYAN))
 
 
+@beartype
 def log_iter_info(cur_iter: int, tot_num_iters: int, tstart: float):
     """Display the current iteration and elapsed time"""
     elapsed = prettify_time(int(time.time() - tstart))

@@ -1,9 +1,11 @@
+from beartype import beartype
 import torch
 
 
 class RunningMoments(object):
 
-    def __init__(self, shape: tuple[int], device: torch.device):
+    @beartype
+    def __init__(self, shape: tuple[int, ...], device: torch.device):
         """Maintain running statistics across workers leveraging Chan's method"""
         self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)
@@ -12,11 +14,13 @@ class RunningMoments(object):
         self.std = torch.ones((dim,), dtype=torch.float32, device=device)
         self.device = device
 
+    @beartype
     def update(self, x):
         """Update running statistics using the new batch's statistics"""
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         self.update_moments(x.mean(dim=0), x.std(dim=0), x.size(0))
 
+    @beartype
     def update_moments(self,
                        batch_mean: torch.Tensor,
                        batch_std: torch.Tensor,
@@ -43,20 +47,25 @@ class RunningMoments(object):
         assert self.mean.device == self.device and self.std.device == self.device, "device issue"
         self.count = new_count
 
+    @beartype
     def standardize(self, x: torch.Tensor):
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x - self.mean) / self.std
 
+    @beartype
     def destandardize(self, x: torch.Tensor):
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x * self.std) + self.mean
 
+    @beartype
     def divide_by_std(self, x: torch.Tensor):
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return x / self.std
 
+    @beartype
     def load_state_dict(self, state_dict: dict):
         self.__dict__.update(state_dict)
 
+    @beartype
     def state_dict(self):
         return self.__dict__.copy()

@@ -4,6 +4,7 @@ from pathlib import Path
 from functools import partial
 from typing import Union, List, Any, Callable
 
+from beartype import beartype
 from omegaconf import OmegaConf, DictConfig
 import wandb
 from wandb.errors import CommError
@@ -23,6 +24,7 @@ from agents.spp_agent import SPPAgent
 DEBUG = False
 
 
+@beartype
 def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
             agent: SPPAgent,
             seed: int,
@@ -79,6 +81,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         t += 1
 
 
+@beartype
 def postproc_tr(tr: List[Any],
                 agent: SPPAgent,
                 *,
@@ -153,6 +156,7 @@ def postproc_tr(tr: List[Any],
         agent.store_transition(transition)
 
 
+@beartype
 def postproc_vtr(num_envs: int,
                  vtr: List[Any],
                  agent: SPPAgent,
@@ -163,6 +167,7 @@ def postproc_vtr(num_envs: int,
         postproc_tr(tr, agent, wrap_absorb=wrap_absorb)
 
 
+@beartype
 def episode(env: Env,
             agent: SPPAgent,
             seed: int):
@@ -227,6 +232,7 @@ def episode(env: Env,
             ob, _ = env.reset(seed=seed + rng.integers(100000, size=1).item())
 
 
+@beartype
 def evaluate(cfg: DictConfig,
              env: Env,
              agent_wrapper: Callable[[], SPPAgent],
@@ -279,6 +285,7 @@ def evaluate(cfg: DictConfig,
     logger.dump_tabular()
 
 
+@beartype
 def learn(cfg: DictConfig,
           env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
           eval_env: Env,

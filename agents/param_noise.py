@@ -1,8 +1,10 @@
+from beartype import beartype
 import torch
 
 
 class AdaptiveParamNoise(object):
 
+    @beartype
     def __init__(self, device: torch.device, initial_std: float = 0.1, delta: float = 0.1):
         """Adaptive parameter noise, as introduced in the paper
         "Parameter Space Noise for Exploration"
@@ -17,6 +19,7 @@ class AdaptiveParamNoise(object):
         self.delta = torch.tensor(delta).to(device)
         self.cur_std = torch.tensor(initial_std).to(device)  # initialize the current std
 
+    @beartype
     def adapt_std(self, dist: torch.Tensor):
         """Adapt the parameter noise standard deviation based on distance `dist`
             `dist`: distance between the actions predicted respectively by the actor and
@@ -37,10 +40,12 @@ class AdaptiveParamNoise(object):
         else:  # decrease standard deviation
             self.cur_std /= 1.01
 
+    @beartype
     def adapt_delta(self, new_delta: torch.Tensor):
         """Adapt the threshold delta when following an eps-greedy heuristic"""
         assert isinstance(new_delta, torch.Tensor)
         self.delta = new_delta
 
+    @beartype
     def __repr__(self):
         return f"AdaptiveParamNoise(initial_std={self.initial_std}, delta={self.delta})"

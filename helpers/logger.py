@@ -5,7 +5,9 @@ import tempfile
 import json
 import datetime
 from collections import OrderedDict
-from typing import Optional, Any
+from typing import Optional, Union, Any, Callable
+
+from beartype import beartype
 
 
 DEBUG = 10
@@ -30,8 +32,8 @@ class SeqWriter(object):
 
 class HumanOutputFormat(KVWriter, SeqWriter):
 
-    def __init__(self, path_or_io):
-        assert isinstance(path_or_io, (io.TextIOWrapper, Path))
+    @beartype
+    def __init__(self, path_or_io: Union[io.TextIOWrapper, Path]):
 
         if isinstance(path_or_io, Path):
             self.file = path_or_io.open("wt")
@@ -42,7 +44,8 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             self.file = path_or_io
             self.own_file = False
 
-    def writekvs(self, kvs):
+    @beartype
+    def writekvs(self, kvs: dict[Any, Any]):
         # create strings for printing
         key2str = {}
         for (key, val) in kvs.items():
@@ -70,17 +73,22 @@ class HumanOutputFormat(KVWriter, SeqWriter):
         # flush the output to the file
         self.file.flush()
 
+    @beartype
     @staticmethod
-    def truncate(s):
+    def truncate(s: str) -> str:
         thres = 43
         return s[:40] + "..." if len(s) > thres else s
 
     def writeseq(self, seq):
+        print(type(seq))
+        print(seq)
+        raise ValueError
         for arg in seq:
             self.file.write(arg)
         self.file.write("\n")
         self.file.flush()
 
+    @beartype
     def close(self):
         if self.own_file:
             self.file.close()
@@ -141,7 +149,7 @@ class CSVOutputFormat(KVWriter):
     def close(self):
         self.file.close()
 
-
+@beartype
 def make_output_format(formatting: str, directory: Path, suffix: str = ""):
     assert isinstance(directory, Path)
     directory.mkdir(parents=True, exist_ok=True)
@@ -272,7 +280,11 @@ class Logger(object):
     def _log(self, args):
         for output_format in self.output_formats:
             if isinstance(output_format, SeqWriter):
-                output_format.writeseq(map(str, args))
+                x = map(str, args)
+                for e in x:
+                    print(e)
+                raise ValueError
+                output_format.writeseq(x)
 
 
 def configure(directory=None, format_strs=None):

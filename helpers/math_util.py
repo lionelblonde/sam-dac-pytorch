@@ -1,8 +1,11 @@
-import scipy.signal
+import numpy as np
+from beartype import beartype
+from scipy.signal import lfilter
 import torch
 
 
-def discount(x, gamma):
+@beartype
+def discount(x: np.ndarray, gamma: float) -> np.ndarray:
     """Compute discounted sum along the 0-th dimension of the `x` ndarray
     Return an ndarray `y` with the same shape as x, satisfying:
         y[t] = x[t] + gamma * x[t+1] + gamma^2 * x[t+2] + ... + gamma^k * x[t+k],
@@ -13,10 +16,15 @@ def discount(x, gamma):
         gamma (float): Discount factor
     """
     assert x.ndim >= 1
-    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
+    filt = lfilter([1], [1, -gamma], x[::-1], axis=0)
+    assert not isinstance(filt, tuple)
+    assert isinstance(filt, np.ndarray)
+    return filt[::-1]  # give it in reverse
 
 
-def huber_quant_reg_loss(td_errors, quantile, kappa=1.0):
+@beartype
+def huber_quant_reg_loss(
+        td_errors: torch.Tensor, quantile: float, kappa: float = 1.) -> torch.Tensor:
     """Huber regression loss (introduced in 1964) following the definition
     in section 2.3 in the IQN paper (https://arxiv.org/abs/1806.06923).
     The loss involves a disjunction of 2 cases:
@@ -29,15 +37,3 @@ def huber_quant_reg_loss(td_errors, quantile, kappa=1.0):
            (torch.abs(td_errors) - (0.5 * kappa)) *
            (torch.abs(td_errors) > kappa).float())
     return torch.abs(quantile - ((td_errors.le(0.)).float())) * aux / kappa
-
-
-def smooth_out_w_ema(elist, weight):
-    """Exponential moving average"""
-    assert 0 <= weight <= 1
-    acc = elist[0]  # accumulator
-    smoothed_elist = []
-    for e in elist:
-        smoothed_e = acc * weight + (1 - weight) * e
-        smoothed_elist.append(smoothed_e)
-        acc = smoothed_e
-    return smoothed_elist
