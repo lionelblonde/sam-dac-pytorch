@@ -5,7 +5,7 @@ import tempfile
 import json
 import datetime
 from collections import OrderedDict
-from typing import Optional, Union, Any, Callable
+from typing import Optional, Union, Any, Generator
 
 from beartype import beartype
 
@@ -79,10 +79,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
         thres = 43
         return s[:40] + "..." if len(s) > thres else s
 
-    def writeseq(self, seq):
-        print(type(seq))
-        print(seq)
-        raise ValueError
+    def writeseq(self, seq: Generator[str, None, None]):
         for arg in seq:
             self.file.write(arg)
         self.file.write("\n")
@@ -280,10 +277,8 @@ class Logger(object):
     def _log(self, args):
         for output_format in self.output_formats:
             if isinstance(output_format, SeqWriter):
-                x = map(str, args)
-                for e in x:
-                    print(e)
-                raise ValueError
+                # x = map(str, args)
+                x = (str(e) for e in args)
                 output_format.writeseq(x)
 
 
