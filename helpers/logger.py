@@ -1,21 +1,21 @@
 import sys
-import io
 from pathlib import Path
 import tempfile
 import json
 import datetime
 from collections import OrderedDict
-from typing import Optional, Union, Any, Generator
+from typing import Optional, Union, Any, Generator, TextIO
 
 from beartype import beartype
+import numpy as np
 
 
-DEBUG = 10
-INFO = 20
-WARN = 30
-ERROR = 40
+DEBUG: int = 10
+INFO: int = 20
+WARN: int = 30
+ERROR: int = 40
 
-DISABLED = 50
+DISABLED: int = 50
 
 
 class KVWriter(object):
@@ -33,8 +33,7 @@ class SeqWriter(object):
 class HumanOutputFormat(KVWriter, SeqWriter):
 
     @beartype
-    def __init__(self, path_or_io: Union[io.TextIOWrapper, Path]):
-
+    def __init__(self, path_or_io: Union[TextIO, Path]):
         if isinstance(path_or_io, Path):
             self.file = path_or_io.open("wt")
             self.own_file = True
@@ -45,7 +44,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             self.own_file = False
 
     @beartype
-    def writekvs(self, kvs: dict[Any, Any]):
+    def writekvs(self, kvs: dict[str, Union[int, float, np.ndarray]]):
         # create strings for printing
         key2str = {}
         for (key, val) in kvs.items():
@@ -79,6 +78,7 @@ class HumanOutputFormat(KVWriter, SeqWriter):
         thres = 43
         return s[:40] + "..." if len(s) > thres else s
 
+    @beartype
     def writeseq(self, seq: Generator[str, None, None]):
         for arg in seq:
             self.file.write(arg)
@@ -93,31 +93,35 @@ class HumanOutputFormat(KVWriter, SeqWriter):
 
 class JSONOutputFormat(KVWriter):
 
-    def __init__(self, filename):
-        assert isinstance(filename, Path)
+    @beartype
+    def __init__(self, filename: Path):
         self.file = filename.open("wt")
 
-    def writekvs(self, kvs):
+    @beartype
+    def writekvs(self, kvs: dict[str, Union[int, float, np.ndarray]]):
         for k, v in kvs.items():
-            if hasattr(v, "dtype"):
+            # if hasattr(v, "dtype"):
+            if isinstance(v, np.ndarray):
                 v_ = v.tolist()
                 kvs[k] = float(v_)
         self.file.write(json.dumps(kvs) + "\n")
         self.file.flush()
 
+    @beartype
     def close(self):
         self.file.close()
 
 
 class CSVOutputFormat(KVWriter):
 
-    def __init__(self, filename):
-        assert isinstance(filename, Path)
+    @beartype
+    def __init__(self, filename: Path):
         self.file = filename.open("w+t")
         self.keys = []
         self.sep = ","
 
-    def writekvs(self, kvs):
+    @beartype
+    def writekvs(self, kvs: dict[str, Union[int, float, np.ndarray]]):
         # add our current row to the history
         extra_keys = kvs.keys() - self.keys
         if extra_keys:
@@ -146,9 +150,9 @@ class CSVOutputFormat(KVWriter):
     def close(self):
         self.file.close()
 
+
 @beartype
 def make_output_format(formatting: str, directory: Path, suffix: str = ""):
-    assert isinstance(directory, Path)
     directory.mkdir(parents=True, exist_ok=True)
     match formatting:  # python version >3.10 needed
         case "stdout":
@@ -245,15 +249,23 @@ class Logger(object):
     DEFAULT: Optional[Any] = None
     CURRENT: Optional[Any] = None
 
-    def __init__(self, directory, output_formats):
-        self.name2val = OrderedDict()  # values this iteration
-        self.level = INFO
-        self.directory = directory
-        self.output_formats = output_formats
+    @beartype
+    def __init__(self, directory: Path,
+                 output_formats: list[Union[HumanOutputFormat,
+                                            JSONOutputFormat,
+                                            CSVOutputFormat]]):
+        self.name2val = OrderedDict()
+        self.level: int = INFO
+        self.directory: Path = directory
+        self.output_formats: list[Union[HumanOutputFormat,
+                                        JSONOutputFormat,
+                                        CSVOutputFormat]] = output_formats
 
-    def logkv(self, key, val):
+    @beartype
+    def logkv(self, key: str, val: Union[int, float, np.ndarray]):
         self.name2val.update({key: val})
 
+    @beartype
     def dumpkvs(self):
         if self.level == DISABLED:
             return
@@ -262,27 +274,31 @@ class Logger(object):
                 output_format.writekvs(self.name2val)
         self.name2val.clear()
 
-    def log(self, *args, level=INFO):
+    @beartype
+    def log(self, *args: Any, level: int = INFO):
         if self.level <= level:
             # if the current logger level is higher than
             # the `level` argument, don"t print to stdout
             self._log(args)
 
-    def set_level(self, level):
+    @beartype
+    def set_level(self, level: int):
         self.level = level
 
-    def get_dir(self):
+    @beartype
+    def get_dir(self) -> Path:
         return self.directory
 
-    def _log(self, args):
+    @beartype
+    def _log(self, args: tuple[Any, ...]):
         for output_format in self.output_formats:
             if isinstance(output_format, SeqWriter):
-                # x = map(str, args)
                 x = (str(e) for e in args)
                 output_format.writeseq(x)
 
 
-def configure(directory=None, format_strs=None):
+@beartype
+def configure(directory: Optional[Path] = None, format_strs: Optional[list[str]] = None):
     """Configure logger (called in configure_default_logger)"""
     if directory is None:
         directory = Path(tempfile.gettempdir())
@@ -299,6 +315,7 @@ def configure(directory=None, format_strs=None):
     Logger.CURRENT = Logger(directory=directory, output_formats=output_formats)
 
 
+@beartype
 def configure_default_logger():
     """Configure default logger"""
     # write to stdout by default
@@ -311,6 +328,7 @@ def configure_default_logger():
     Logger.DEFAULT = Logger.CURRENT
 
 
+@beartype
 def reset():
     if Logger.CURRENT is not Logger.DEFAULT:
         Logger.CURRENT = Logger.DEFAULT
