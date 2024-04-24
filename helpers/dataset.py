@@ -1,20 +1,26 @@
 from collections import defaultdict
 from pathlib import Path
+
+from typing import Union
 import h5py
+from beartype import beartype
 import numpy as np
+from numpy.random import Generator
 from torch.utils.data import Dataset
 
 from helpers import logger
 
 
-def save_dict_h5py(data, fname):
+@beartype
+def save_dict_h5py(data: dict[str, np.ndarray], fname: Union[str, Path]):
     """Save dictionary containing numpy arrays to h5py file."""
     with h5py.File(fname, "w") as hf:
         for key in data:
             hf.create_dataset(key, data=data[key])
 
 
-def load_dict_h5py(fname):
+@beartype
+def load_dict_h5py(fname: Union[str, Path]) -> dict[str, np.ndarray]:
     """Restore dictionary containing numpy arrays from h5py file."""
     data = {}
     with h5py.File(fname, "r") as hf:
@@ -29,20 +35,29 @@ def load_dict_h5py(fname):
 
 class DictDataset(Dataset):
 
-    def __init__(self, data):
-        assert isinstance(data, dict)
+    @beartype
+    def __init__(self, data: dict[str, np.ndarray]):
         self.data = data
 
-    def __getitem__(self, i):
+    @beartype
+    def __getitem__(self, i: int) -> dict[str, np.ndarray]:
         return {k: v[i, ...].astype(np.float32) for k, v in self.data.items()}
 
-    def __len__(self):
+    @beartype
+    def __len__(self) -> int:
         return len(next(iter(self.data.values())))
 
 
 class DemoDataset(DictDataset):
 
-    def __init__(self, np_rng, expert_path, num_demos, max_ep_steps, wrap_absorb):
+    @beartype
+    def __init__(self,
+                 np_rng: Generator,
+                 expert_path: str,
+                 num_demos: int,
+                 max_ep_steps: int,
+                 *,
+                 wrap_absorb: bool):
         logger.info("creating dataset")
         logger.info(f"spec::expert path: {expert_path}")
         logger.info(f"spec::num_demos: {num_demos}")
@@ -65,8 +80,14 @@ class DemoDataset(DictDataset):
 
             # remove undesirable keys (at least in this application)
             assert tmp["dones1"][-1], "by construction"  # making sure every ep ends with done
-            tmp.pop("pix_obs0", None)
-            tmp.pop("pix_obs1", None)
+            try:
+                tmp.pop("pix_obs0")
+                tmp.pop("pix_obs1")
+            except KeyError:
+                logger.warn("keys to filter out are not in")
+                logger.info("so no need to remove them")
+            else:
+                logger.info("keys properly removed")
 
             # extract and display content dims
             dims = {k: tmp[k].shape[1:] for k in tmp}
@@ -74,11 +95,13 @@ class DemoDataset(DictDataset):
             logger.info(f"[DEMO DATASET] dims: {dims}")
 
             # get episode statistics
-            ep_len = tmp.pop("ep_lens", None)  # return and delete key
-            ep_ret = tmp.pop("ep_env_rets", None)  # return and delete key
-            message = "we should have 1 file = 1 episode"
-            assert np.issubdtype(ep_len.dtype, np.int64), message
-            assert np.issubdtype(ep_ret.dtype, np.float64), message
+            try:
+                ep_len = tmp.pop("ep_lens")  # return and delete key
+                ep_ret = tmp.pop("ep_env_rets")  # return and delete key
+            except KeyError as ke:
+                logger.error("required keys are missing")
+                raise KeyError from ke
+
             padd_ep_len = "ep_len".ljust(20, "-")
             padd_ep_ret = "ep_ret".ljust(20, "-")
             logger.info(f"[DEMO DATASET]::{padd_ep_len}{ep_len}")
