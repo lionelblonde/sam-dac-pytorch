@@ -1,26 +1,29 @@
 from collections import defaultdict
 
+from beartype import beartype
 import numpy as np
 
 from helpers.math_util import discount
 
 
-def array_min2d(x):
-    x = np.array(x)
+@beartype
+def array_min2d(x: list[np.ndarray]) -> np.ndarray:
+    x_ = np.array(x)  # merge list of ndarrays into one ndarray (concat works too here)
     dim_thres = 2
-    if x.ndim >= dim_thres:
-        return x
-    return x.reshape(-1, 1)
+    if x_.ndim >= dim_thres:
+        return x_
+    return x_.reshape(-1, 1)
 
 
 class RingBuffer(object):
 
-    def __init__(self, maxlen, shape, dtype="float32"):
+    @beartype
+    def __init__(self, maxlen: int, shape: tuple[int, ...]):
         """Ring buffer implementation"""
         self.maxlen = maxlen
         self.start = 0
         self.length = 0
-        self.data = np.zeros((maxlen, *shape), dtype=dtype)
+        self.data = np.zeros((maxlen, *shape), dtype=np.float32)
 
     def __len__(self):
         return self.length
@@ -132,7 +135,10 @@ class ReplayBuffer(object):
         la_batch["idxs"] = transitions["idxs"]
 
         # wrap every value with `array_min2d`
-        return {k: array_min2d(v) for k, v in la_batch.items()}
+        for k, v in la_batch.items():
+            print(k, type(v), len(v), type(v[0]), np.array(v).shape)
+        raise ValueError
+        return {k: array_min2d(v) for k, v in la_batch.items() if k != "idxs"}
 
     def lookahead_sample(self, batch_size, n, gamma, patcher):
         # sample a batch of transitions
