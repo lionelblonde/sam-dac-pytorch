@@ -363,7 +363,8 @@ def learn(cfg: DictConfig,
                         # adapt parameter noise
                         agent.adapt_param_noise()
                         agent.send_to_dash(
-                            {"pn_dist": agent.pn_dist, "pn_cur_std": agent.param_noise.cur_std},
+                            {"pn_dist": agent.pn_dist.numpy(force=True),
+                             "pn_cur_std": agent.param_noise.cur_std.numpy(force=True)},
                             step_metric=agent.actr_updates_so_far,
                             glob="explore",
                         )  # `pn_dist`: action-space dist between perturbed and non-perturbed
@@ -410,17 +411,22 @@ def learn(cfg: DictConfig,
                         frame_collection = eval_env.render()
                         record_video(vid_dir, f"iter{i}-ep{j}", np.array(frame_collection))
 
-                eval_metrics = {"ep_len": len_buff, "ep_env_ret": env_ret_buff}
+                eval_metrics: dict[str, np.ndarray] = {
+                    "ep_len": np.array(len_buff), "ep_env_ret": np.array(env_ret_buff)}
 
                 # log stats in csv
                 logger.record_tabular("timestep", agent.timesteps_so_far)
                 for k, v in eval_metrics.items():
-                    logger.record_tabular(f"{k}-mean", np.mean(v))
+                    logger.record_tabular(f"{k}-mean", v.mean())
                 logger.info("dumping stats in .csv file")
                 logger.dump_tabular()
 
                 # log stats in dashboard
-                agent.send_to_dash(eval_metrics, step_metric=agent.timesteps_so_far, glob="eval")
+                agent.send_to_dash(
+                    {f"{k}-mean": v.mean() for k, v in eval_metrics.items()},
+                    step_metric=agent.timesteps_so_far,
+                    glob="eval",
+                )
 
     # save once we are done
     agent.save_to_path(ckpt_dir, xtra="done")
