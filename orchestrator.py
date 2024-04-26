@@ -100,7 +100,10 @@ def postproc_tr(tr: List[Any],
         if terminated:
             # wrap with an absorbing state
             _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None]).numpy(force=True)
+            _rew = agent.get_syn_rew(
+                rearrange(_ob, "d -> 1 d"),
+                rearrange(_ac, "d -> 1 d"),
+                rearrange(_new_ob, "d -> 1 d")).numpy(force=True)
             transition = {
                 "obs0": _ob,
                 "acs": _ac,
@@ -116,7 +119,10 @@ def postproc_tr(tr: List[Any],
             _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
             _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)
             _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None]).numpy(force=True)
+            _rew_a = agent.get_syn_rew(
+                rearrange(_ob_a, "d -> 1 d"),
+                rearrange(_ac_a, "d -> 1 d"),
+                rearrange(_new_ob_a, "d -> 1 d")).numpy(force=True)
             transition_a = {
                 "obs0": _ob_a,
                 "acs": _ac_a,
@@ -130,7 +136,10 @@ def postproc_tr(tr: List[Any],
             agent.store_transition(transition_a)
         else:
             _new_ob = np.append(new_ob, 0)
-            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None]).numpy(force=True)
+            _rew = agent.get_syn_rew(
+                rearrange(_ob, "d -> 1 d"),
+                rearrange(_ac, "d -> 1 d"),
+                rearrange(_new_ob, "d -> 1 d")).numpy(force=True)
             transition = {
                 "obs0": _ob,
                 "acs": _ac,
@@ -143,7 +152,10 @@ def postproc_tr(tr: List[Any],
             }
             agent.store_transition(transition)
     else:
-        rew = agent.get_syn_rew(ob[None], ac[None], new_ob[None]).numpy(force=True)
+        rew = agent.get_syn_rew(
+                rearrange(ob, "d -> 1 d"),
+                rearrange(ac, "d -> 1 d"),
+                rearrange(new_ob, "d -> 1 d")).numpy(force=True)
         transition = {
             "obs0": ob,
             "acs": ac,
