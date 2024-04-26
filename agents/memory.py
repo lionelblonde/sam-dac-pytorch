@@ -1,18 +1,20 @@
 from collections import defaultdict
+from typing import Any, Optional, Callable
 
 from beartype import beartype
+from einops import rearrange
 import numpy as np
+from numpy.random import Generator
 
 from helpers.math_util import discount
 
 
 @beartype
-def array_min2d(x: list[np.ndarray]) -> np.ndarray:
-    x_ = np.array(x)  # merge list of ndarrays into one ndarray (concat works too here)
+def array_min2d(x: np.ndarray) -> np.ndarray:
     dim_thres = 2
-    if x_.ndim >= dim_thres:
-        return x_
-    return x_.reshape(-1, 1)
+    if x.ndim >= dim_thres:
+        return x
+    return rearrange(x, "b -> b 1")
 
 
 class RingBuffer(object):
@@ -25,28 +27,31 @@ class RingBuffer(object):
         self.length = 0
         self.data = np.zeros((maxlen, *shape), dtype=np.float32)
 
+    @beartype
     def __len__(self):
         return self.length
 
-    def __getitem__(self, idx):
+    @beartype
+    def __getitem__(self, idx: int):
         if idx < 0 or idx >= self.length:
             raise KeyError
         return self.data[(self.start + idx) % self.maxlen]
 
-    def get_batch(self, idxs):
+    @beartype
+    def get_batch(self, idxs: np.ndarray) -> np.ndarray:
+        # important: idxs is a numpy array, and start and maxlen are ints
         return self.data[(self.start + idxs) % self.maxlen]
 
-    def append(self, v):
+    @beartype
+    def append(self, *, v: np.ndarray):
         if self.length < self.maxlen:
             # we have space, simply increase the length
             self.length += 1
             self.data[(self.start + self.length - 1) % self.maxlen] = v
-
         elif self.length == self.maxlen:
             # no space, remove the first item
             self.start = (self.start + 1) % self.maxlen
             self.data[(self.start + self.length - 1) % self.maxlen] = v
-
         else:
             # this should never happen
             raise RuntimeError
@@ -54,34 +59,50 @@ class RingBuffer(object):
 
 class ReplayBuffer(object):
 
-    def __init__(self, np_rng, capacity, erb_shapes):
+    @beartype
+    def __init__(self,
+                 np_rng: Generator,
+                 capacity: int,
+                 erb_shapes: dict[str, tuple[Any, ...]]):
         self.np_rng = np_rng
         self.capacity = capacity
         self.ring_buffers = {n: RingBuffer(self.capacity, s) for n, s in erb_shapes.items()}
 
-    def batchify(self, idxs):
+    @beartype
+    def batchify(self, idxs: np.ndarray) -> dict[str, np.ndarray]:
         """Collect a batch from indices"""
-        transitions = {
-            n: array_min2d(self.ring_buffers[n].get_batch(idxs))
-            for n in self.ring_buffers
-        }
+        transitions = {}
+        for n in self.ring_buffers:  # avoiding dict comprehension here: introspection
+            ll = self.ring_buffers[n].get_batch(idxs)
+            aa = array_min2d(ll)
+            transitions[n] = aa
         transitions["idxs"] = idxs  # add idxs too
         return transitions
 
-    def sample(self, batch_size, patcher):
+    @beartype
+    def sample(self,
+               batch_size: int,
+               patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
+        ) -> dict[str, np.ndarray]:
         """Sample transitions uniformly from the replay buffer"""
         idxs = self.np_rng.integers(low=0, high=self.num_entries, size=batch_size)
         transitions = self.batchify(idxs)
-
         if patcher is not None:
             # patch the rewards
-            transitions["rews"] = patcher(transitions["obs0"],
-                                          transitions["acs"],
-                                          transitions["obs1"])
-
+            transitions["rews"] = patcher(
+                transitions["obs0"],
+                transitions["acs"],
+                transitions["obs1"],
+            )
         return transitions
 
-    def lookahead(self, transitions, n, gamma, patcher):
+    @beartype
+    def lookahead(self,
+                  transitions: dict[str, np.ndarray],
+                  n: int,
+                  gamma: float,
+                  patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
+        ) -> dict[str, np.ndarray]:
         """Perform n-step TD lookahead estimations starting from every transition"""
         assert 0 <= gamma <= 1
 
@@ -132,34 +153,44 @@ class ReplayBuffer(object):
             if "acs_orig" in la_transitions:
                 la_batch["acs_orig"].append(la_transitions["acs_orig"][0])
 
-        la_batch["idxs"] = transitions["idxs"]
+        la_batch["idxs"] = [transitions["idxs"]]  # in list for type-checker
 
-        # wrap every value with `array_min2d`
-        for k, v in la_batch.items():
-            print(k, type(v), len(v), type(v[0]), np.array(v).shape)
-        raise ValueError
-        return {k: array_min2d(v) for k, v in la_batch.items() if k != "idxs"}
+        return {k: array_min2d(np.array(v)) for k, v in la_batch.items()}
 
-    def lookahead_sample(self, batch_size, n, gamma, patcher):
+    @beartype
+    def la_sample(self,
+                  batch_size: int,
+                  n: int,
+                  gamma: float,
+                  patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
+        ) -> dict[str, np.ndarray]:
         # sample a batch of transitions
         transitions = self.sample(batch_size, patcher)
         # expand each transition with a n-step TD lookahead
         return self.lookahead(transitions, n, gamma, patcher)
 
-    def append(self, transition):
+    lookahead_sample = la_sample  # alias for more legibility in agent file
+
+    @beartype
+    def append(self, transition: dict[str, np.ndarray]):
         """Add a transition to the replay buffer"""
         assert self.ring_buffers.keys() == transition.keys(), "keys must coincide"
         for k in self.ring_buffers:
-            self.ring_buffers[k].append(transition[k])
+            if not isinstance(transition[k], np.ndarray):
+                raise TypeError(k)
+            self.ring_buffers[k].append(v=transition[k])
 
-    def __repr__(self):
+    @beartype
+    def __repr__(self) -> str:
         return f"ReplayBuffer(capacity={self.capacity})"
 
+    @beartype
     @property
-    def latest_entry_idx(self):
+    def latest_entry_idx(self) -> int:
         pick = self.ring_buffers["obs0"]  # could pick any other key
         return (pick.start + pick.length - 1) % pick.maxlen
 
+    @beartype
     @property
-    def num_entries(self):
+    def num_entries(self) -> int:
         return len(self.ring_buffers["obs0"])  # could pick any other key
