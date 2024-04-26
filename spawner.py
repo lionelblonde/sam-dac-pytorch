@@ -3,6 +3,7 @@ from copy import deepcopy
 import os
 import sys
 
+from beartype import beartype
 from omegaconf import OmegaConf, DictConfig
 import fire
 import numpy as np
@@ -42,18 +43,27 @@ NUM_SWEEP_TRIALS = 10
 
 class Spawner(object):
 
-    def __init__(self, cfg, num_demos, num_seeds, env_bundle, caliber, deployment, sweep):
+    @beartype
+    def __init__(self,
+                 cfg: str,
+                 num_demos: list[int],
+                 num_seeds: int,
+                 env_bundle: str,
+                 caliber: str,
+                 deployment: str,
+                 *,
+                 sweep: bool):
 
         self.num_seeds = num_seeds
         self.deployment = deployment
         self.sweep = sweep
-        self.path_to_cfg = cfg  # careful here: name explicit for a reason
 
         assert self.deployment in {"tmux", "slurm"}
 
         # retrieve config from filesystem
         proj_root = Path(__file__).resolve().parent
-        _cfg = OmegaConf.load(proj_root / Path(cfg))
+        self.path_to_cfg = proj_root / Path(cfg)
+        _cfg = OmegaConf.load(self.path_to_cfg)
         assert isinstance(_cfg, DictConfig)
         self._cfg: DictConfig = _cfg  # for the type-checker
 
@@ -98,6 +108,7 @@ class Spawner(object):
         demo_dir = os.environ["DEMO_DIR"]
         self.demos = {k: Path(demo_dir) / k for k in self.envs}
 
+    @beartype
     @staticmethod
     def copy_and_add_seed(hpmap: dict[str, Any], seed: int) -> dict[str, Any]:
         hpmap_ = deepcopy(hpmap)
@@ -122,6 +133,7 @@ class Spawner(object):
 
         return hpmap_
 
+    @beartype
     def copy_and_add_env(self, hpmap: dict[str, Any], env: str) -> dict[str, Any]:
         hpmap_ = deepcopy(hpmap)
 
@@ -130,6 +142,7 @@ class Spawner(object):
 
         return hpmap_
 
+    @beartype
     @staticmethod
     def copy_and_add_num_demos(hpmap: dict[str, Any], num_demos: int) -> dict[str, Any]:
         hpmap_ = deepcopy(hpmap)
@@ -137,6 +150,7 @@ class Spawner(object):
         hpmap_.update({"num_demos": num_demos})
         return hpmap_
 
+    @beartype
     def get_hps(self):
         """Return a list of maps of hyperparameters"""
 
@@ -176,6 +190,7 @@ class Spawner(object):
 
         return hpmaps
 
+    @beartype
     @staticmethod
     def unroll_options(hpmap: dict[str, Any]) -> str:
         """Transform the dictionary of hyperparameters into a string of bash options"""
@@ -184,6 +199,7 @@ class Spawner(object):
             arguments += f" --{k}={v}"
         return arguments
 
+    @beartype
     def create_job_str(self, name: str, command: str) -> str:
         """Build the batch script that launches a job"""
 
@@ -237,12 +253,13 @@ class Spawner(object):
         return bash_script_str
 
 
+@beartype
 def run(cfg: str,
         conda_env: str,
         env_bundle: str,
         deployment: str,
         num_seeds: int,
-        num_demos: list[str],
+        num_demos: list[int],
         caliber: str,
         *,
         deploy_now: bool,
@@ -267,7 +284,7 @@ def run(cfg: str,
         os.environ["WANDB_MODE"] = "dryrun"
 
     # create a spawner object
-    spawner = Spawner(cfg, num_demos, num_seeds, env_bundle, caliber, deployment, sweep)
+    spawner = Spawner(cfg, num_demos, num_seeds, env_bundle, caliber, deployment, sweep=sweep)
 
     # create directory for spawned jobs
     root = Path(__file__).resolve().parent
