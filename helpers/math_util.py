@@ -24,7 +24,7 @@ def discount(x: np.ndarray, gamma: float) -> np.ndarray:
 
 @beartype
 def huber_quant_reg_loss(
-        td_errors: torch.Tensor, quantile: float, kappa: float = 1.) -> torch.Tensor:
+        td_errors: torch.Tensor, quantile: torch.Tensor, kappa: float = 1.) -> torch.Tensor:
     """Huber regression loss (introduced in 1964) following the definition
     in section 2.3 in the IQN paper (https://arxiv.org/abs/1806.06923).
     The loss involves a disjunction of 2 cases:

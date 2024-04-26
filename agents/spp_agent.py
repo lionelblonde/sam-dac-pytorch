@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
+from beartype import beartype
 from omegaconf import DictConfig
 from einops import repeat, rearrange
 import wandb
@@ -23,8 +24,9 @@ from agents.memory import ReplayBuffer
 
 class SPPAgent(object):
 
+    @beartype
     def __init__(self,
-                 net_shapes: dict,
+                 net_shapes: dict[str, tuple[int, ...]],
                  max_ac: float,
                  device: torch.device,
                  hps: DictConfig,
@@ -166,19 +168,23 @@ class SPPAgent(object):
             log_module_info(self.twin)
         log_module_info(self.disc)
 
-    def norm_rets(self, x):
+    @beartype
+    def norm_rets(self, x: torch.Tensor) -> torch.Tensor:
         """Standardize if return normalization is used, do nothing otherwise"""
         if self.hps.ret_norm:
             return self.rms_ret.standardize(x)
         return x
 
-    def denorm_rets(self, x):
+    @beartype
+    def denorm_rets(self, x: torch.Tensor) -> torch.Tensor:
         """Standardize if return denormalization is used, do nothing otherwise"""
         if self.hps.ret_norm:
             return self.rms_ret.destandardize(x)
         return x
 
-    def parse_noise_type(self, noise_type):
+    @beartype
+    def parse_noise_type(self, noise_type: str) -> tuple[Optional[AdaptiveParamNoise],
+                                                         Optional[NormalActionNoise]]:
         """Parse the `noise_type` hyperparameter"""
         param_noise, ac_noise = None, None
         logger.info("parsing noise type")
@@ -207,7 +213,8 @@ class SPPAgent(object):
                 raise RuntimeError(f"unknown noise type: {cnt}")
         return param_noise, ac_noise
 
-    def store_transition(self, transition):
+    @beartype
+    def store_transition(self, transition: dict[str, np.ndarray]):
         """Store the transition in memory and update running moments"""
         assert self.replay_buffer is not None
         # store transition in the replay buffer
@@ -221,12 +228,14 @@ class SPPAgent(object):
             _state = _state[0:-1]
         self.rms_obs.update(torch.Tensor(_state).to(self.device))
 
-    def sample_batch(self):
+    @beartype
+    def sample_batch(self) -> dict[str, np.ndarray]:
         """Sample a batch of transitions from the replay buffer"""
         assert self.replay_buffer is not None
 
         # create patcher if needed
-        def _patcher(x, y, z):
+        @beartype
+        def _patcher(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
             return self.get_syn_rew(x, y, z).numpy(force=True)
 
         # get a batch of transitions from replay buffer
@@ -244,7 +253,8 @@ class SPPAgent(object):
             )
         return batch
 
-    def predict(self, ob, apply_noise):
+    @beartype
+    def predict(self, ob, *, apply_noise: bool) -> np.ndarray:
         """Predict an action, with or without perturbation"""
 
         # create tensor from the state (`require_grad=False` by default)
@@ -264,13 +274,14 @@ class SPPAgent(object):
             ac += noise
 
         # place on cpu and collapse into one dimension
-        ac = ac.cpu().detach().numpy()
+        ac = ac.numpy(force=True)
 
         return ac.clip(-self.max_ac, self.max_ac)
 
-    def remove_absorbing(self, x):
+    @beartype
+    def remove_absorbing(self, x: torch.Tensor) -> tuple[torch.Tensor, list[int]]:
         non_absorbing_rows = []
-        for j, row in enumerate([x[i, :] for i in range(x.shape[0])]):
+        for j, row in enumerate([x[i, :] for i in range(x.size(0))]):
             if torch.all(torch.eq(row, torch.cat([torch.zeros_like(row[0:-1]),
                                                   torch.Tensor([1.]).to(self.device)], dim=-1))):
                 logger.info(f"removing absorbing row (#{j})")
@@ -278,7 +289,17 @@ class SPPAgent(object):
                 non_absorbing_rows.append(j)
         return x[non_absorbing_rows, :], non_absorbing_rows
 
-    def compute_losses(self, state, action, next_state, next_action, reward, done, td_len):
+    @beartype
+    def compute_losses(self,
+                       state: torch.Tensor,
+                       action: torch.Tensor,
+                       next_state: torch.Tensor,
+                       next_action: torch.Tensor,
+                       reward: torch.Tensor,
+                       done: torch.Tensor,
+                       td_len: torch.Tensor) -> tuple[torch.Tensor,
+                                                      torch.Tensor,
+                                                      Optional[torch.Tensor]]:
         """Compute the critic and actor losses"""
 
         twin_loss = None
@@ -406,12 +427,20 @@ class SPPAgent(object):
 
         return actr_loss, crit_loss, twin_loss
 
-    def send_to_dash(self, metrics, *, step_metric, glob):
+    @beartype
+    def send_to_dash(self,
+                     metrics: dict[str, Union[np.float64, np.int64, np.ndarray]],
+                     *,
+                     step_metric: int,
+                     glob: str):
         """Send the metrics to the wandb dashboard"""
-        wandb_dict = {
-            f"{glob}/{k}": v.item() if hasattr(v, "item") else v
-            for k, v in metrics.items()
-        }
+        wandb_dict = {}
+        for k, v in metrics.items():
+            if isinstance(v, np.ndarray):
+                assert v.ndim == 0
+            assert hasattr(v, "item"), "in case of API changes"
+            wandb_dict[f"{glob}/{k}"] = v.item()
+
         if glob == "train":
             wandb_dict[f"{glob}/actr_lr"] = self.actr_sched.get_last_lr()[0]  # current lr
 
@@ -420,9 +449,9 @@ class SPPAgent(object):
         wandb.log(wandb_dict)
         logger.info(f"logged this to wandb: {wandb_dict}")
 
-    def update_actr_crit(self, batch, update_actr):
+    @beartype
+    def update_actr_crit(self, batch: dict[str, np.ndarray], *, update_actr: bool):
         """Update the critic and the actor"""
-
         # transfer to device
         if self.hps.wrap_absorb:
             state = torch.Tensor(batch["obs0_orig"]).to(self.device)
@@ -462,7 +491,7 @@ class SPPAgent(object):
             self.actr_opt.zero_grad()
 
             self.send_to_dash(
-                {"actr_loss": actr_loss},
+                {"actr_loss": actr_loss.numpy(force=True)},
                 step_metric=self.crit_updates_so_far,
                 glob="train",
             )
@@ -478,7 +507,7 @@ class SPPAgent(object):
         self.crit_opt.zero_grad()
 
         self.send_to_dash(
-            {"crit_loss": crit_loss},
+            {"crit_loss": crit_loss.numpy(force=True)},
             step_metric=self.crit_updates_so_far,
             glob="train",
         )
@@ -490,7 +519,7 @@ class SPPAgent(object):
             self.twin_opt.zero_grad()
 
             self.send_to_dash(
-                {"twin_loss": twin_loss},
+                {"twin_loss": twin_loss.numpy(force=True)},
                 step_metric=self.crit_updates_so_far,  # as many updates as critic
                 glob="train",
             )
@@ -500,7 +529,8 @@ class SPPAgent(object):
         # update target nets
         self.update_target_net()
 
-    def update_disc(self, batch):
+    @beartype
+    def update_disc(self, batch: dict[str, np.ndarray]):
 
         metrics = {}
 
@@ -589,13 +619,21 @@ class SPPAgent(object):
             self.disc_updates_so_far += 1
 
         # populate metrics with the latest values
-        metrics.update({"entropy_loss": entropy_loss, "p_e_loss": p_e_loss})
-        if self.hps.grad_pen:
-            metrics.update({"grad_pen": grad_pen})
+        if entropy_loss is not None:
+            metrics["entropy_loss"] = entropy_loss.numpy(force=True)
+        if p_e_loss is not None:
+            metrics["p_e_loss"] = p_e_loss.numpy(force=True)
+        if self.hps.grad_pen and grad_pen is not None:
+            metrics["grad_pen"] = grad_pen.numpy(force=True)
         self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob="train")
         del metrics
 
-    def grad_pen(self, p_input_a, p_input_b, e_input_a, e_input_b):
+    @beartype
+    def grad_pen(self,
+                 p_input_a: torch.Tensor,
+                 p_input_b: torch.Tensor,
+                 e_input_a: torch.Tensor,
+                 e_input_b: torch.Tensor) -> torch.Tensor:
         """Compute the gradient penalty"""
 
         # assemble interpolated inputs
@@ -638,16 +676,18 @@ class SPPAgent(object):
 
         return grad_pen.mean()  # average over batch
 
-    def get_syn_rew(self, state, action, next_state):
+    @beartype
+    def get_syn_rew(self,
+                    state: np.ndarray,
+                    action: np.ndarray,
+                    next_state: np.ndarray) -> torch.Tensor:
 
         # define the discriminator inputs
         input_a = state
         input_b = next_state if self.hps.state_only else action
-        assert sum([isinstance(x, torch.Tensor) for x in [input_a, input_b]]) in {0, 2}
-        if not isinstance(input_a, torch.Tensor):  # then the other is not neither
-            input_a = torch.Tensor(input_a)
-            input_b = torch.Tensor(input_b)
-
+        # turn into torch tensors
+        input_a = torch.Tensor(input_a)
+        input_b = torch.Tensor(input_b)
         # transfer to device in use
         input_a = input_a.to(self.device)
         input_b = input_b.to(self.device)
@@ -671,9 +711,9 @@ class SPPAgent(object):
             # return the sum the two previous reward functions (as in AIRL, Fu et al. 2018)
             # numerics: might be better might be way worse
             reward = non_satur_reward + minimax_reward
-
         return reward
 
+    @beartype
     def update_target_net(self):
         """Update the target networks"""
 
@@ -704,6 +744,7 @@ class SPPAgent(object):
                     twin_state_dict = self.twin.state_dict()
                     self.targ_twin.load_state_dict(twin_state_dict)
 
+    @beartype
     def adapt_param_noise(self):
         """Adapt the parameter noise standard deviation"""
         assert self.replay_buffer is not None
@@ -734,6 +775,7 @@ class SPPAgent(object):
         # adapt the parameter noise with the computed distance
         self.param_noise.adapt_std(self.pn_dist)
 
+    @beartype
     def reset_noise(self):
         """Reset noise process (must be used at episode termination)"""
 
@@ -754,14 +796,15 @@ class SPPAgent(object):
                 param = self.actr.state_dict()[p].clone().detach()
                 self.pnp_actr.state_dict()[p].detach().copy_(param)
 
-    def save_to_path(self, path, xtra=None):
+    @beartype
+    def save_to_path(self, path: Path, xtra: Optional[str] = None):
         """Save the agent to disk"""
         # prep checkpoint
         suffix = f"checkpoint_{self.timesteps_so_far}"
         if xtra is not None:
             suffix += f"_{xtra}"
         suffix += ".tar"
-        path = Path(path) / suffix
+        path = path / suffix
         checkpoint = {
             "hps": self.hps,  # handy for archeology
             "timesteps_so_far": self.timesteps_so_far,
@@ -783,7 +826,8 @@ class SPPAgent(object):
         # save checkpoint to filesystem
         torch.save(checkpoint, path)
 
-    def load_from_path(self, path):
+    @beartype
+    def load_from_path(self, path: Path):
         """Load an agent from disk into this one"""
         checkpoint = torch.load(path)
         if "timesteps_so_far" in checkpoint:
