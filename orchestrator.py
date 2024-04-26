@@ -5,6 +5,7 @@ from functools import partial
 from typing import Union, List, Any, Callable
 
 from beartype import beartype
+from einops import rearrange
 from omegaconf import OmegaConf, DictConfig
 import wandb
 from wandb.errors import CommError
@@ -54,7 +55,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
         if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             assert isinstance(env, Env)
-            done = terminated or truncated
+            done = np.array(terminated or truncated)
             if truncated:
                 logger.warn("termination caused by something like time limit or out of bounds?")
         else:
@@ -62,7 +63,8 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
 
-        tr_or_vtr = [ob, ac, new_ob, done, terminated]
+        tr_or_vtr = [
+            ob, ac, new_ob, rearrange(done, "b -> b 1"), rearrange(terminated, "b -> b 1")]
         if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             pp_func = partial(postproc_vtr, env.num_envs)
         else:
@@ -98,8 +100,7 @@ def postproc_tr(tr: List[Any],
         if terminated:
             # wrap with an absorbing state
             _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
-            _rew = _rew.cpu().numpy().flatten().item()
+            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None]).numpy(force=True)
             transition = {
                 "obs0": _ob,
                 "acs": _ac,
@@ -115,8 +116,7 @@ def postproc_tr(tr: List[Any],
             _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
             _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)
             _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None])
-            _rew_a = _rew_a.cpu().numpy().flatten().item()
+            _rew_a = agent.get_syn_rew(_ob_a[None], _ac_a[None], _new_ob_a[None]).numpy(force=True)
             transition_a = {
                 "obs0": _ob_a,
                 "acs": _ac_a,
@@ -130,8 +130,7 @@ def postproc_tr(tr: List[Any],
             agent.store_transition(transition_a)
         else:
             _new_ob = np.append(new_ob, 0)
-            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None])
-            _rew = _rew.cpu().numpy().flatten().item()
+            _rew = agent.get_syn_rew(_ob[None], _ac[None], _new_ob[None]).numpy(force=True)
             transition = {
                 "obs0": _ob,
                 "acs": _ac,
@@ -144,8 +143,7 @@ def postproc_tr(tr: List[Any],
             }
             agent.store_transition(transition)
     else:
-        rew = agent.get_syn_rew(ob[None], ac[None], new_ob[None])
-        rew = rew.cpu().numpy().flatten().item()
+        rew = agent.get_syn_rew(ob[None], ac[None], new_ob[None]).numpy(force=True)
         transition = {
             "obs0": ob,
             "acs": ac,
