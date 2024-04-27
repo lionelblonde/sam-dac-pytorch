@@ -142,7 +142,7 @@ class SPPAgent(object):
         # set up lr scheduler
         self.actr_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.actr_opt,
-            T_max=800,
+            T_max=1_000_000,
         )  # decay lr with cosine annealing schedule without restarts
 
         if self.expert_dataset is not None:
@@ -434,6 +434,10 @@ class SPPAgent(object):
                      step_metric: int,
                      glob: str):
         """Send the metrics to the wandb dashboard"""
+
+        if self.actr_updates_so_far % 100 != 0:
+            return
+
         wandb_dict = {}
         for k, v in metrics.items():
             if isinstance(v, np.ndarray):
@@ -776,7 +780,7 @@ class SPPAgent(object):
         self.param_noise.adapt_std(self.pn_dist)
 
     @beartype
-    def reset_noise(self):
+    def reset_noise(self):  # TODO(lionel): allow this in nonvec envs only
         """Reset noise process (must be used at episode termination)"""
 
         # reset action noise
