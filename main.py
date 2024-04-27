@@ -109,7 +109,8 @@ class MagicRunner(object):
     def train(self):
 
         # mlsys
-        torch.set_num_threads(1)  # TODO(lionel): keep an eye on this
+        numth = self._cfg.numenv if self._cfg.vecenv else 1
+        torch.set_num_threads(numth)  # TODO(lionel): keep an eye on this
 
         # set printing options
         np.set_printoptions(precision=3)
@@ -127,7 +128,7 @@ class MagicRunner(object):
             OmegaConf.save(config=self._cfg, f=(log_path / "cfg.yml"))
 
         # device
-        assert not self._cfg.fp16 or self._cfg.cuda, "fp16 => cuda"
+        assert not self._cfg.fp16 or self._cfg.cuda, "fp16 => cuda"  # TODO(lionel): fp16 not done
         if self._cfg.cuda:
             # use cuda
             assert torch.cuda.is_available()
