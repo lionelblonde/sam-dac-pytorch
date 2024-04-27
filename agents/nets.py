@@ -107,11 +107,11 @@ class Discriminator(nn.Module):
         self.fc_stack = nn.Sequential(OrderedDict([
             ("fc_block_1", nn.Sequential(OrderedDict([
                 ("fc", apply_sn(nn.Linear(in_dim, 100))),
-                ("nl", nn.Softsign()),
+                ("nl", nn.LeakyReLU(negative_slope=0.1)),
             ]))),
             ("fc_block_2", nn.Sequential(OrderedDict([
                 ("fc", apply_sn(nn.Linear(100, 100))),
-                ("nl", nn.Softsign()),
+                ("nl", nn.LeakyReLU(negative_slope=0.1)),
             ]))),
         ]))
         self.d_head = nn.Linear(100, 1)
@@ -171,14 +171,14 @@ class Actor(nn.Module):
             ("fc_block", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(ob_dim, 300)),
                 ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
-                ("nl", nn.Softsign()),
+                ("nl", nn.ReLU()),
             ]))),
         ]))
         self.a_fc_stack = nn.Sequential(OrderedDict([
             ("fc_block", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(300, 200)),
                 ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(200)),
-                ("nl", nn.Softsign()),
+                ("nl", nn.ReLU()),
             ]))),
         ]))
         self.a_head = nn.Linear(200, ac_dim)
@@ -241,12 +241,12 @@ class Critic(nn.Module):
             ("fc_block_1", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(ob_dim + ac_dim, 400)),
                 ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(400)),
-                ("nl", nn.Softsign()),
+                ("nl", nn.ReLU()),
             ]))),
             ("fc_block_2", nn.Sequential(OrderedDict([
                 ("fc", nn.Linear(400, 300)),
                 ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
-                ("nl", nn.Softsign()),
+                ("nl", nn.ReLU()),
             ]))),
         ]))
         self.head = nn.Linear(300, num_heads)
