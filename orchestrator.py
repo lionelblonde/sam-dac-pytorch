@@ -55,16 +55,18 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
         if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             assert isinstance(env, Env)
-            done = np.array(terminated or truncated)
+            done = np.array([terminated or truncated])
             if truncated:
                 logger.warn("termination caused by something like time limit or out of bounds?")
         else:
             done = np.logical_or(terminated, truncated)  # might not be used but diagnostics
+            done = rearrange(done, "b -> b 1")
+            terminated = rearrange(terminated, "b -> b 1")
+
         # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
 
-        tr_or_vtr = [
-            ob, ac, new_ob, rearrange(done, "b -> b 1"), rearrange(terminated, "b -> b 1")]
+        tr_or_vtr = [ob, ac, new_ob, done, terminated]
         if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             pp_func = partial(postproc_vtr, env.num_envs)
         else:
@@ -79,6 +81,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
             assert isinstance(env, Env)
             if done:
                 ob, _ = env.reset(seed=seed)
+                agent.reset_noise()
 
         t += 1
 
