@@ -405,8 +405,9 @@ class SPPAgent(object):
             # compute target qz estimate and same for twin
             q_prime = self.targ_crit(next_state, next_action)
             twin_q_prime = self.targ_twin(next_state, next_action)
-            q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +
-                       0.25 * torch.max(q_prime, twin_q_prime))  # soft minimum from BCQ
+            # q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +  # TODO(lionel): fix this
+            #            0.25 * torch.max(q_prime, twin_q_prime))  # soft minimum from BCQ
+            q_prime = torch.min(q_prime, twin_q_prime)
             targ_q = (reward +
                       (self.hps.gamma ** td_len) * (1. - done) *
                       self.denorm_rets(q_prime).detach())
@@ -488,11 +489,11 @@ class SPPAgent(object):
         if update_actr:
 
             # update actor
+            self.actr_opt.zero_grad()
             actr_loss.backward()
             if self.hps.clip_norm > 0:
                 cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
             self.actr_opt.step()
-            self.actr_opt.zero_grad()
 
             self.send_to_dash(
                 {"actr_loss": actr_loss.numpy(force=True)},
@@ -506,9 +507,9 @@ class SPPAgent(object):
             self.actr_sched.step()
 
         # update critic
+        self.crit_opt.zero_grad()
         crit_loss.backward()
         self.crit_opt.step()
-        self.crit_opt.zero_grad()
 
         self.send_to_dash(
             {"crit_loss": crit_loss.numpy(force=True)},
@@ -518,9 +519,9 @@ class SPPAgent(object):
 
         if twin_loss is not None:
             # update twin
+            self.twin_opt.zero_grad()
             twin_loss.backward()
             self.twin_opt.step()
-            self.twin_opt.zero_grad()
 
             self.send_to_dash(
                 {"twin_loss": twin_loss.numpy(force=True)},
@@ -722,20 +723,24 @@ class SPPAgent(object):
         """Update the target networks"""
 
         if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
+            logger.info("carrying out slow tracking target nets")
             # if non-distributional, targets slowly track their non-target counterparts
             with torch.no_grad():
                 for param, targ_param in zip(self.actr.parameters(),
                                              self.targ_actr.parameters()):
-                    new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
+                    new_param = self.hps.polyak * param
+                    new_param += (1. - self.hps.polyak) * targ_param
                     targ_param.copy_(new_param)
                 for param, targ_param in zip(self.crit.parameters(),
                                              self.targ_crit.parameters()):
-                    new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
+                    new_param = self.hps.polyak * param
+                    new_param += (1. - self.hps.polyak) * targ_param
                     targ_param.copy_(new_param)
                 if self.hps.clipped_double:
                     for param, targ_param in zip(self.twin.parameters(),
                                                  self.targ_twin.parameters()):
-                        new_param = self.hps.polyak * param + (1. - self.hps.polyak) * targ_param
+                        new_param = self.hps.polyak * param
+                        new_param += (1. - self.hps.polyak) * targ_param
                         targ_param.copy_(new_param)
         elif self.crit_updates_so_far % self.hps.targ_up_freq == 0:
             # distributional case: periodically set target weights with online models
