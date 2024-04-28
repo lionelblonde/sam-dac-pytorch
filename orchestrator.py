@@ -52,7 +52,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
             yield
 
         # interact with env
-        new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
+        new_ob, env_rew, terminated, truncated, _ = env.step(ac)  # (reward and) info ignored
         if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             assert isinstance(env, Env)
             done = np.array([terminated or truncated])
@@ -66,7 +66,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
 
-        tr_or_vtr = [ob, ac, new_ob, done, terminated]
+        tr_or_vtr = [ob, ac, env_rew, new_ob, done, terminated]
         if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             pp_func = partial(postproc_vtr, env.num_envs)
         else:
@@ -92,7 +92,7 @@ def postproc_tr(tr: List[Any],
                 *,
                 wrap_absorb: bool):
 
-    ob, ac, new_ob, done, terminated = tr
+    ob, ac, env_rew, new_ob, done, terminated = tr
 
     if wrap_absorb:
 
@@ -155,10 +155,11 @@ def postproc_tr(tr: List[Any],
             }
             agent.store_transition(transition)
     else:
-        rew = agent.get_syn_rew(
-                rearrange(ob, "d -> 1 d"),
-                rearrange(ac, "d -> 1 d"),
-                rearrange(new_ob, "d -> 1 d")).numpy(force=True)
+        rew = rearrange(np.array([env_rew]), "b -> b 1")  # TODO(lionel): fix this
+        # rew = agent.get_syn_rew(
+        #         rearrange(ob, "d -> 1 d"),
+        #         rearrange(ac, "d -> 1 d"),
+        #         rearrange(new_ob, "d -> 1 d")).numpy(force=True)
         transition = {
             "obs0": ob,
             "acs": ac,
