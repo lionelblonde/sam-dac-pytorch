@@ -81,7 +81,6 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
             assert isinstance(env, Env)
             if done:
                 ob, _ = env.reset(seed=seed)
-                agent.reset_noise()
 
         t += 1
 
@@ -373,18 +372,6 @@ def learn(cfg: DictConfig,
 
         with timed("training"):
             for _ in range(cfg.training_steps_per_iter):
-
-                if agent.param_noise is not None:
-                    if agent.actr_updates_so_far % cfg.pn_adapt_frequency == 0:
-                        # adapt parameter noise
-                        agent.adapt_param_noise()
-                        agent.send_to_dash(
-                            {"pn_dist": agent.pn_dist.numpy(force=True),
-                             "pn_cur_std": agent.param_noise.cur_std.numpy(force=True)},
-                            step_metric=agent.actr_updates_so_far,
-                            glob="explore",
-                        )  # `pn_dist`: action-space dist between perturbed and non-perturbed
-                        # `pn_cur_std`: store the new std resulting from the adaption
 
                 for _ in range(agent.hps["g_steps"]):
                     # sample a batch of transitions from the replay buffer

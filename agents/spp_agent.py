@@ -785,27 +785,6 @@ class SPPAgent(object):
         self.param_noise.adapt_std(self.pn_dist)
 
     @beartype
-    def reset_noise(self):  # TODO(lionel): allow this in nonvec envs only
-        """Reset noise process (must be used at episode termination)"""
-
-        # reset action noise
-        if self.ac_noise is not None:
-            self.ac_noise.reset()
-
-        # reset parameter-noise-perturbed actor vars by redefining the pnp actor
-        # w.r.t. the actor (by applying additive gaussian noise with current std)
-        if self.param_noise is not None:
-            # update the perturbable params
-            for p in self.actr.perturbable_params:
-                param = (self.actr.state_dict()[p]).clone().detach()
-                noise = param.clone().detach().normal_(0, self.param_noise.cur_std)
-                self.pnp_actr.state_dict()[p].detach().copy_(param + noise)
-            # update the non-perturbable params
-            for p in self.actr.non_perturbable_params:
-                param = self.actr.state_dict()[p].clone().detach()
-                self.pnp_actr.state_dict()[p].detach().copy_(param)
-
-    @beartype
     def save_to_path(self, path: Path, xtra: Optional[str] = None):
         """Save the agent to disk"""
         # prep checkpoint
