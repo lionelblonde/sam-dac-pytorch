@@ -353,7 +353,7 @@ def learn(cfg: DictConfig,
             time.sleep(pause)
     logger.info("wandb co established!")
 
-    for glob in ["train", "explore", "eval"]:  # wandb categories
+    for glob in ["train_actr", "train_crit", "train_disc", "eval"]:  # wandb categories
         # define a custom x-axis
         wandb.define_metric(f"{glob}/step")
         wandb.define_metric(f"{glob}/*", step_metric=f"{glob}/step")
