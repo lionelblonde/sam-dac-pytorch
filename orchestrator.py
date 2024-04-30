@@ -24,6 +24,8 @@ from agents.spp_agent import SPPAgent
 
 DEBUG = False
 
+USE_ENV_REW = True  # TODO(lionel): fix this (note: only used now when wrap absorb is false)
+
 
 @beartype
 def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
@@ -154,11 +156,14 @@ def postproc_tr(tr: List[Any],
             }
             agent.store_transition(transition)
     else:
-        rew = rearrange(np.array([env_rew]), "b -> b 1")  # TODO(lionel): fix this
-        # rew = agent.get_syn_rew(
-        #         rearrange(ob, "d -> 1 d"),
-        #         rearrange(ac, "d -> 1 d"),
-        #         rearrange(new_ob, "d -> 1 d")).numpy(force=True)
+        if USE_ENV_REW:
+            rew = rearrange(np.array([env_rew]), "b -> b 1")  # TODO(lionel): fix this
+            logger.warn("WARNING: using env rew!")
+        else:
+            rew = agent.get_syn_rew(
+                    rearrange(ob, "d -> 1 d"),
+                    rearrange(ac, "d -> 1 d"),
+                    rearrange(new_ob, "d -> 1 d")).numpy(force=True)
         transition = {
             "obs0": ob,
             "acs": ac,
