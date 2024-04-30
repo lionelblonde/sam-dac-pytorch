@@ -32,11 +32,11 @@ segment_len: 2
 batch_size: 64
 gamma: 0.99
 mem_size: 100000
-noise_type: "adaptive-param_0.2, normal_0.2"
+noise_type: "normal_0.1"
 pn_adapt_frequency: 50
 polyak: 0.005
 targ_up_freq: 100
-n_step_returns: false
+n_step_returns: true
 lookahead: 10
 ret_norm: false
 
@@ -68,5 +68,5 @@ grad_pen_targ: 1.
 grad_pen_scale: 10.
 one_sided_pen: true
 historical_patching: true
-wrap_absorb: false
+wrap_absorb: true
 d_batch_norm: false
