@@ -18,7 +18,6 @@ from helpers.normalizer import RunningMoments
 from helpers.dataset import DictDataset, DemoDataset
 from helpers.math_util import huber_quant_reg_loss
 from agents.nets import log_module_info, Actor, Critic, Discriminator
-from agents.param_noise import AdaptiveParamNoise
 from agents.ac_noise import NormalActionNoise
 from agents.memory import ReplayBuffer
 
@@ -82,8 +81,12 @@ class SPPAgent(object):
             # if using neither distributional rl variant, use clipped double
             assert self.hps.clipped_double
 
-        # parse the noise types
-        self.param_noise, self.ac_noise = self.parse_noise_type(self.hps.noise_type)
+        # setup action noise (TD3)
+        self.ac_noise = NormalActionNoise(
+            mu=torch.zeros(self.ac_shape).to(self.device),
+            sigma=float(self.hps.normal_noise_std) * torch.ones(self.ac_shape).to(self.device),
+        )  # spherical/isotropic additive Normal(0., 0.1) action noise (we set the std via cfg)
+        logger.info(f"{self.ac_noise} configured")
 
         # create observation normalizer that maintains running statistics
         self.rms_obs = RunningMoments(shape=self.ob_shape, device=self.device)
@@ -117,14 +120,6 @@ class SPPAgent(object):
             self.twin = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
             self.targ_twin = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
             self.targ_twin.load_state_dict(self.twin.state_dict())
-
-        if self.param_noise is not None:
-            # create parameter-noise-perturbed ("pnp") actor
-            self.pnp_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
-            self.pnp_actr.load_state_dict(self.actr.state_dict())
-            # create adaptive-parameter-noise-perturbed ("apnp") actor
-            self.apnp_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
-            self.apnp_actr.load_state_dict(self.actr.state_dict())
 
         # set up the optimizers
         self.actr_opt = torch.optim.Adam(self.actr.parameters(), lr=self.hps.actor_lr)
@@ -184,37 +179,6 @@ class SPPAgent(object):
         return x
 
     @beartype
-    def parse_noise_type(self, noise_type: str) -> tuple[Optional[AdaptiveParamNoise],
-                                                         Optional[NormalActionNoise]]:
-        """Parse the `noise_type` hyperparameter"""
-        param_noise, ac_noise = None, None
-        logger.info("parsing noise type")
-        # parse the comma-seprated (with possible whitespaces) list of noise params
-        for cur_noise_type in noise_type.split(","):
-            cnt = cur_noise_type.strip()  # remove all whitespaces (start and end)
-            # if the specified noise type is literally "none"
-            if cnt == "none":
-                pass
-            # if "adaptive-param" is in the specified string for noise type
-            elif "adaptive-param" in cnt:
-                # set parameter noise
-                _, std = cnt.split("_")
-                param_noise = AdaptiveParamNoise(device=self.device,
-                                                 initial_std=float(std),
-                                                 delta=float(std))
-                logger.info(f"{param_noise} configured")
-            elif "normal" in cnt:
-                _, std = cnt.split("_")
-                # spherical (isotropic) gaussian action noise
-                mu = torch.zeros(self.ac_shape).to(self.device)
-                sigma = float(std) * torch.ones(self.ac_shape).to(self.device)
-                ac_noise = NormalActionNoise(mu=mu, sigma=sigma)
-                logger.info(f"{ac_noise} configured")
-            else:
-                raise RuntimeError(f"unknown noise type: {cnt}")
-        return param_noise, ac_noise
-
-    @beartype
     def store_transition(self, transition: dict[str, np.ndarray]):
         """Store the transition in memory and update running moments"""
         assert self.replay_buffer is not None
@@ -257,27 +221,20 @@ class SPPAgent(object):
     @beartype
     def predict(self, ob, *, apply_noise: bool) -> np.ndarray:
         """Predict an action, with or without perturbation"""
-
         # create tensor from the state (`require_grad=False` by default)
         ob = torch.Tensor(ob).to(self.device)
-
-        # predict following a parameter-noise-perturbed actor, or the non-perturbed actor
-        if apply_noise and self.param_noise is not None:
-            ac = self.pnp_actr(ob)
-            logger.info("using the perturbed actor")
-        else:
-            ac = self.actr(ob)
-
-        if apply_noise and self.ac_noise is not None:
+        # predict an action
+        ac = self.actr(ob)
+        # if desired, add noise to the predicted action
+        if apply_noise:
             # apply additive action noise once the action has been predicted,
             # in combination with parameter noise, or not.
-            noise = self.ac_noise.generate()
-            ac += noise
-
-        # place on cpu and collapse into one dimension
+            ac += self.ac_noise.generate()
+        # place on cpu as a numpy array
         ac = ac.numpy(force=True)
-
-        return ac.clip(-self.max_ac, self.max_ac)
+        # clip the action to fit within the range from the environment
+        ac.clip(-self.max_ac, self.max_ac)
+        return ac
 
     @beartype
     def remove_absorbing(self, x: torch.Tensor) -> tuple[torch.Tensor, list[int]]:
@@ -751,37 +708,6 @@ class SPPAgent(object):
                 if self.hps.clipped_double:
                     twin_state_dict = self.twin.state_dict()
                     self.targ_twin.load_state_dict(twin_state_dict)
-
-    @beartype
-    def adapt_param_noise(self):
-        """Adapt the parameter noise standard deviation"""
-        assert self.replay_buffer is not None
-
-        assert self.param_noise is not None, "you should not be here"
-
-        # perturb separate copy of the policy to adjust the scale for the next perturbation
-
-        batch = self.replay_buffer.sample(self.hps.batch_size, patcher=None)
-        state = torch.Tensor(batch["obs0"]).to(self.device)
-
-        # update the perturbable params
-        for p in self.actr.perturbable_params:
-            param = (self.actr.state_dict()[p]).clone().detach()
-            noise = param.clone().detach().normal_(0, self.param_noise.cur_std)
-            self.apnp_actr.state_dict()[p].detach().copy_(param + noise)
-
-        # update the non-perturbable params
-        for p in self.actr.non_perturbable_params:
-            param = self.actr.state_dict()[p].clone().detach()
-            self.apnp_actr.state_dict()[p].detach().copy_(param)
-
-        # compute distance between actor and perturbed actor predictions
-        if self.hps.wrap_absorb:
-            state = self.remove_absorbing(state)[0][:, 0:-1]
-        self.pn_dist = torch.sqrt(ff.mse_loss(self.actr(state), self.apnp_actr(state)))
-
-        # adapt the parameter noise with the computed distance
-        self.param_noise.adapt_std(self.pn_dist)
 
     @beartype
     def save_to_path(self, path: Path, xtra: Optional[str] = None):
