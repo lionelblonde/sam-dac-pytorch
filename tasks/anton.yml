@@ -4,8 +4,8 @@ fp16: false
 mps: false
 
 # env
-vecenv: false
-numenv: 1
+vecenv: true
+numenv: 4
 
 # logging
 wandb_project: "damnlemons"
