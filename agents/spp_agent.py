@@ -8,6 +8,7 @@ import wandb
 import numpy as np
 import torch
 from torch.nn.utils import clip_grad as cg
+
 import torch.nn.functional as ff
 from torch.utils.data import DataLoader
 from torch import autograd
@@ -405,9 +406,13 @@ class SPPAgent(object):
             # compute target qz estimate and same for twin
             q_prime = self.targ_crit(next_state, next_action)
             twin_q_prime = self.targ_twin(next_state, next_action)
-            # q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +  # TODO(lionel): fix this
-            #            0.25 * torch.max(q_prime, twin_q_prime))  # soft minimum from BCQ
-            q_prime = torch.min(q_prime, twin_q_prime)
+            if self.hps.bcq_style_targ_mix:
+                # use BCQ style of target mixing: soft minimum
+                q_prime = (0.75 * torch.min(q_prime, twin_q_prime) +
+                           0.25 * torch.max(q_prime, twin_q_prime))
+            else:
+                # use TD3 style of target mixing: hard minimum
+                q_prime = torch.min(q_prime, twin_q_prime)
             targ_q = (reward +
                       (self.hps.gamma ** td_len) * (1. - done) *
                       self.denorm_rets(q_prime).detach())

@@ -42,6 +42,7 @@ ret_norm: false
 
 # TD3
 clipped_double: true
+bcq_style_targ_mix: true
 targ_actor_smoothing: true
 td3_std: 0.2
 td3_c: 0.5
