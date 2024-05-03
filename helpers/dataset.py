@@ -96,26 +96,24 @@ class DemoDataset(DictDataset):
 
             # get episode statistics
             try:
-                ep_len = tmp.pop("ep_lens")  # return and delete key
-                ep_ret = tmp.pop("ep_env_rets")  # return and delete key
+                self.ep_len = tmp.pop("ep_lens")  # return and delete key
+                self.ep_ret = tmp.pop("ep_env_rets")  # return and delete key
             except KeyError as ke:
                 logger.error("required keys are missing")
                 raise KeyError from ke
 
-            padd_ep_len = "ep_len".ljust(20, "-")
-            padd_ep_ret = "ep_ret".ljust(20, "-")
-            logger.info(f"[DEMO DATASET]::{padd_ep_len}{ep_len}")
-            logger.info(f"[DEMO DATASET]::{padd_ep_ret}{ep_ret}")
-            self.stats["ep_len"].append(ep_len)
-            self.stats["ep_ret"].append(ep_ret)
+            keys_ = ["ep_len", "ep_ret"]
+            for a, b in zip(keys_, [k.ljust(20, "-") for k in keys_]):
+                logger.info(f"[DEMO DATASET]::{b}{a}")
+                self.stats[a].append(getattr(self, a))
 
             # determine if terminal because of timeout or real termination
-            terminal = ep_len != max_ep_steps
+            terminal = self.ep_len != max_ep_steps
 
             # subsample trajectory: trajectories are not contiguous sequences
             sub_rate = 20  # N=20 in the original GAIL paper
             start = np_rng.integers(low=0, high=sub_rate)
-            indices = [start + (i * sub_rate) for i in range(ep_len // sub_rate)]
+            indices = [start + (i * sub_rate) for i in range(self.ep_len // sub_rate)]
             ep_len = len(indices)  # overwrite ep_len
 
             padd_substr = "subsample".ljust(15, "-")
