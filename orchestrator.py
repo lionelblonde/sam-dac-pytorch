@@ -157,7 +157,7 @@ def postproc_tr(tr: List[Any],
             agent.store_transition(transition)
     else:
         if USE_ENV_REW:
-            rew = rearrange(np.array([env_rew]), "b -> b 1")  # TODO(lionel): fix this
+            rew = rearrange(np.array([env_rew]), "b -> b 1")
             logger.warn("WARNING: using env rew!")
         else:
             rew = agent.get_syn_rew(
