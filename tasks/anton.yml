@@ -34,7 +34,7 @@ gamma: 0.99
 mem_size: 100000
 polyak: 0.005
 targ_up_freq: 100
-n_step_returns: false
+n_step_returns: true
 lookahead: 5
 ret_norm: false
 
