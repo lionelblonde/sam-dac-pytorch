@@ -605,15 +605,14 @@ class SPPAgent(object):
         # get the gradient of this operation w.r.t. its inputs
         grads = autograd.grad(
             outputs=score,
-            inputs=[input_a_i, input_b_i],
+            inputs=(inputs := [input_a_i, input_b_i]),
             only_inputs=True,
             grad_outputs=[torch.ones_like(score)],
             retain_graph=True,
             create_graph=True,
             allow_unused=False,
         )
-        des_len = 2
-        assert len(list(grads)) == des_len, "length must be exactly 2"
+        assert len(list(grads)) == len(inputs), "length must be exactly 2"
 
         # return the gradient penalty
         grads = torch.cat(list(grads), dim=-1)
