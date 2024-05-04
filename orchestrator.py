@@ -370,8 +370,7 @@ def learn(cfg: DictConfig,
 
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned segment, stored in buffer
-            agent.timesteps_so_far += cfg.segment_len * int(cfg.numenv if cfg.vecenv else 1)
-            # when a vectorized env of n envs is used, we increment by n times the amount
+            agent.timesteps_so_far += cfg.segment_len
 
         with timed("training"):
             for _ in range(cfg.training_steps_per_iter):
