@@ -227,7 +227,7 @@ class MagicRunner(object):
         # name
         name = f"{self.name}.eval_trajs{str(self._cfg['num_trajs']).zfill(2)}"
         # logger
-        if DISABLE_LOGGER:
+        if self.DISABLE_LOGGER:
             logger.set_level(logger.DISABLED)  # turn the logging off
         else:
             logger.configure(directory=None, format_strs=["stdout"])
@@ -258,7 +258,7 @@ class MagicRunner(object):
                 device=device,
                 hps=self._cfg,
                 expert_dataset=None,
-                replay_buffer=None,
+                replay_buffers=None,
             )
 
         # evaluate

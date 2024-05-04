@@ -33,8 +33,8 @@ class SPPAgent(object):
                  max_ac: float,
                  device: torch.device,
                  hps: DictConfig,
-                 expert_dataset: DemoDataset,
-                 replay_buffers: list[ReplayBuffer]):
+                 expert_dataset: Optional[DemoDataset],
+                 replay_buffers: Optional[list[ReplayBuffer]]):
 
         self.ob_shape, self.ac_shape = net_shapes["ob_shape"], net_shapes["ac_shape"]
         self.max_ac = max_ac
@@ -186,6 +186,7 @@ class SPPAgent(object):
     @beartype
     def sample_batch(self) -> dict[str, np.ndarray]:
         """Sample a batch of transitions from the replay buffer"""
+        assert self.replay_buffers is not None
 
         # create patcher if needed
         @beartype
