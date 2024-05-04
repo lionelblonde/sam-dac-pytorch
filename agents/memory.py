@@ -88,7 +88,7 @@ class ReplayBuffer(object):
                 # create indexes of transitions in lookahead
                 # of lengths max `lookahead` following sampled one
                 la_end_idx = min(idx + lookahead, self.num_entries) - 1
-                la_idxs = np.array(range(idx, la_end_idx + 1))
+                la_idxs = np.arange(idx, la_end_idx + 1)
                 # collect the batch for the lookahead rollout indices
                 la_trns = self.get_trns(la_idxs)
                 if patcher is not None:
@@ -98,7 +98,10 @@ class ReplayBuffer(object):
                 # drop everything after episode reset, if any
                 dones = la_trns["dones1"]
                 term_idx = 1.0
-                ep_end_idx = idx + list(dones).index(1.0) if term_idx in dones else la_end_idx
+                if term_idx in dones:  # no inline for legibility
+                    ep_end_idx = idx + np.argmax(np.asarray(dones) == term_idx)
+                else:
+                    ep_end_idx = la_end_idx
                 la_is_trimmed = 0.0 if ep_end_idx == la_end_idx else 1.0
                 # compute lookahead length
                 td_len = ep_end_idx - idx + 1
