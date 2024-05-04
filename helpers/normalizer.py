@@ -1,4 +1,7 @@
+from typing import Union, Any
+
 from beartype import beartype
+import numpy as np
 import torch
 
 
@@ -15,9 +18,12 @@ class RunningMoments(object):
         self.device = device
 
     @beartype
-    def update(self, x):
+    def update(self, x: Union[torch.Tensor, np.ndarray]):
         """Update running statistics using the new batch's statistics"""
-        assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
+        if isinstance(x, torch.Tensor):
+            assert x.device == self.device, "must: same device"
+        elif isinstance(x, np.ndarray):
+            x = torch.Tensor(x).to(self.device)
         self.update_moments(x.mean(dim=0), x.std(dim=0), x.size(0))
 
     @beartype
@@ -48,17 +54,17 @@ class RunningMoments(object):
         self.count = new_count
 
     @beartype
-    def standardize(self, x: torch.Tensor):
+    def standardize(self, x: torch.Tensor) -> torch.Tensor:
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x - self.mean) / self.std
 
     @beartype
-    def destandardize(self, x: torch.Tensor):
+    def destandardize(self, x: torch.Tensor) -> torch.Tensor:
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return (x * self.std) + self.mean
 
     @beartype
-    def divide_by_std(self, x: torch.Tensor):
+    def divide_by_std(self, x: torch.Tensor) -> torch.Tensor:
         assert isinstance(x, torch.Tensor) and x.device == self.device, "must: same device"
         return x / self.std
 
@@ -67,5 +73,5 @@ class RunningMoments(object):
         self.__dict__.update(state_dict)
 
     @beartype
-    def state_dict(self):
+    def state_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()

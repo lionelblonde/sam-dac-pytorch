@@ -5,7 +5,7 @@ mps: false
 
 # env
 vecenv: true
-numenv: 2
+numenv: 4
 
 # logging
 wandb_project: "damnlemons"
@@ -28,7 +28,7 @@ clip_norm: 40.
 wd_scale: 0.
 
 # algorithm
-segment_len: 1
+segment_len: 2
 batch_size: 64
 gamma: 0.99
 mem_size: 100000

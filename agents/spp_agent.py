@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, Union
+from collections import defaultdict
 
 from beartype import beartype
 from omegaconf import DictConfig
@@ -24,14 +25,16 @@ from agents.memory import ReplayBuffer
 
 class SPPAgent(object):
 
+    MAGIC_FACTOR: float = 0.1
+
     @beartype
     def __init__(self,
                  net_shapes: dict[str, tuple[int, ...]],
                  max_ac: float,
                  device: torch.device,
                  hps: DictConfig,
-                 expert_dataset: Optional[DemoDataset],
-                 replay_buffer: Optional[ReplayBuffer]):
+                 expert_dataset: DemoDataset,
+                 replay_buffers: list[ReplayBuffer]):
 
         self.ob_shape, self.ac_shape = net_shapes["ob_shape"], net_shapes["ac_shape"]
         self.max_ac = max_ac
@@ -55,7 +58,7 @@ class SPPAgent(object):
         self.expert_dataset = expert_dataset
 
         # replay buffer
-        self.replay_buffer = replay_buffer
+        self.replay_buffers = replay_buffers
 
         # critic
         assert sum([self.hps.use_c51, self.hps.use_qr, self.hps.clipped_double]) == 1
@@ -138,8 +141,10 @@ class SPPAgent(object):
         # set up lr scheduler
         self.actr_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.actr_opt,
-            T_max=1_000_000,
-        )  # decay lr with cosine annealing schedule without restarts
+            (t_max := ((self.MAGIC_FACTOR * self.hps.num_timesteps * self.hps.actor_update_delay) /
+                       (self.hps.training_steps_per_iter * self.hps.g_steps))),
+        )
+        logger.info(f"{t_max = }")
 
         if self.expert_dataset is not None:
             # set up demonstrations dataloader
@@ -179,44 +184,37 @@ class SPPAgent(object):
         return x
 
     @beartype
-    def store_transition(self, transition: dict[str, np.ndarray]):
-        """Store the transition in memory and update running moments"""
-        assert self.replay_buffer is not None
-        # store transition in the replay buffer
-        self.replay_buffer.append(transition)
-        # update the observation normalizer
-        _state = transition["obs0"]
-        if self.hps.wrap_absorb:
-            if np.all(np.equal(_state, np.append(np.zeros_like(_state[0:-1]), 1.))):
-                # if this is a "flag" state (wrap absorbing): not used to update rms_obs
-                return
-            _state = _state[0:-1]
-        self.rms_obs.update(torch.Tensor(_state).to(self.device))
-
-    @beartype
     def sample_batch(self) -> dict[str, np.ndarray]:
         """Sample a batch of transitions from the replay buffer"""
-        assert self.replay_buffer is not None
 
         # create patcher if needed
         @beartype
         def _patcher(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
             return self.get_syn_rew(x, y, z).numpy(force=True)
 
+        patcher = _patcher if self.hps.historical_patching else None
+
         # get a batch of transitions from replay buffer
-        if self.hps.n_step_returns:
-            batch = self.replay_buffer.lookahead_sample(
-                self.hps.batch_size,
-                self.hps.lookahead,
-                self.hps.gamma,
-                patcher=_patcher if self.hps.historical_patching else None,
-            )
-        else:
-            batch = self.replay_buffer.sample(
-                self.hps.batch_size,
-                patcher=_patcher if self.hps.historical_patching else None,
-            )
-        return batch
+        batches = defaultdict(list)
+        for rb in self.replay_buffers:
+            if self.hps.n_step_returns:
+                batch = rb.lookahead_sample(
+                    self.hps.batch_size,
+                    self.hps.lookahead,
+                    self.hps.gamma,
+                    patcher=patcher,
+                )
+            else:
+                batch = rb.sample(
+                    self.hps.batch_size,
+                    patcher=patcher,
+                )
+            for k, v in batch.items():
+                batches[k].append(v)
+        out = {}
+        for k, v in batches.items():
+            out[k] = rearrange(v, "n b d -> (n b) d")
+        return out
 
     @beartype
     def predict(self, ob, *, apply_noise: bool) -> np.ndarray:
@@ -679,7 +677,6 @@ class SPPAgent(object):
         """Update the target networks"""
 
         if sum([self.hps.use_c51, self.hps.use_qr]) == 0:
-            logger.info("carrying out slow tracking target nets")
             # if non-distributional, targets slowly track their non-target counterparts
             with torch.no_grad():
                 for param, targ_param in zip(self.actr.parameters(),

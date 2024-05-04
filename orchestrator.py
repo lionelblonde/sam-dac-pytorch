@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from functools import partial
-from typing import Union, List, Any, Callable
+from typing import Union, Callable
 
 from beartype import beartype
 from einops import rearrange
@@ -23,8 +23,6 @@ from agents.spp_agent import SPPAgent
 
 
 DEBUG = False
-
-USE_ENV_REW = True  # TODO(lionel): fix this (note: only used now when wrap absorb is false)
 
 
 @beartype
@@ -54,27 +52,44 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
             yield
 
         # interact with env
-        new_ob, env_rew, terminated, truncated, _ = env.step(ac)  # (reward and) info ignored
+        new_ob, _, terminated, truncated, _ = env.step(ac)  # reward and info ignored
         if not isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             assert isinstance(env, Env)
-            done = np.array([terminated or truncated])
+            done, terminated = np.array([terminated or truncated]), np.array([terminated])
             if truncated:
                 logger.warn("termination caused by something like time limit or out of bounds?")
         else:
             done = np.logical_or(terminated, truncated)  # might not be used but diagnostics
-            done = rearrange(done, "b -> b 1")
-            terminated = rearrange(terminated, "b -> b 1")
-
+            done, terminated = rearrange(done, "b -> b 1"), rearrange(terminated, "b -> b 1")
         # read about what truncation means at the link below:
         # https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/#truncation
 
-        tr_or_vtr = [ob, ac, env_rew, new_ob, done, terminated]
+        tr_or_vtr = [ob, ac, new_ob, done, terminated]
         if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
             pp_func = partial(postproc_vtr, env.num_envs)
         else:
             assert isinstance(env, Env)
             pp_func = postproc_tr
-        pp_func(tr_or_vtr, agent, wrap_absorb=wrap_absorb)
+        outss = pp_func(tr_or_vtr, agent.ob_shape, agent.ac_shape, wrap_absorb=wrap_absorb)
+        assert outss is not None
+        for i, outs in enumerate(outss):
+            for out in outs:
+                # add synthetic rewards to each transition
+                out.update({"rews": agent.get_syn_rew(
+                    *(rearrange(x, "d -> 1 d") for x in [out["obs0"], out["acs"], out["obs1"]]),
+                ).numpy(force=True)})
+
+                # add transition to the i-th replay buffer
+                agent.replay_buffers[i].append(out)
+
+                # update the observation normalizer
+                out_obs0 = deepcopy(out["obs0"])
+                if wrap_absorb:
+                    if np.all(np.equal(out_obs0, np.append(np.zeros_like(out_obs0[0:-1]), 1.))):
+                        # if this is a "flag" state (wrap absorbing): not used to update rms_obs
+                        pass
+                    else:
+                        agent.rms_obs.update(out_obs0[0:-1])
 
         # set current state with the next
         ob = deepcopy(new_ob)
@@ -88,12 +103,31 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
 
 
 @beartype
-def postproc_tr(tr: List[Any],
-                agent: SPPAgent,
-                *,
-                wrap_absorb: bool):
+def postproc_vtr(num_envs: int,
+                 vtr: list[np.ndarray],
+                 ob_shape: tuple[int, ...],
+                 ac_shape: tuple[int, ...],
+                 *,
+                 wrap_absorb: bool) -> list[tuple[dict[str, np.ndarray], ...]]:
+    # N.B.: for the num of envs and the workloads, serial treatment is faster than parallel
+    # time it takes for the main process to spawn X threads is too much overhead
+    # it starts becoming interesting if the post-processing is heavier though
+    vouts = []
+    for i in range(num_envs):
+        tr = [e[i] for e in vtr]
+        outs = postproc_tr(tr, ob_shape, ac_shape, wrap_absorb=wrap_absorb)
+        vouts.extend(outs)
+    return vouts
 
-    ob, ac, env_rew, new_ob, done, terminated = tr
+
+@beartype
+def postproc_tr(tr: list[np.ndarray],
+                ob_shape: tuple[int, ...],
+                ac_shape: tuple[int, ...],
+                *,
+                wrap_absorb: bool) -> list[tuple[dict[str, np.ndarray], ...]]:
+
+    ob, ac, new_ob, done, terminated = tr
 
     if wrap_absorb:
 
@@ -103,86 +137,50 @@ def postproc_tr(tr: List[Any],
         # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
         if terminated:
             # wrap with an absorbing state
-            _new_ob = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew = agent.get_syn_rew(
-                rearrange(_ob, "d -> 1 d"),
-                rearrange(_ac, "d -> 1 d"),
-                rearrange(_new_ob, "d -> 1 d")).numpy(force=True)
+            _new_ob = np.append(np.zeros(ob_shape[-1]), 1)
             transition = {
                 "obs0": _ob,
                 "acs": _ac,
                 "obs1": _new_ob,
-                "rews": _rew,
                 "dones1": done,
                 "obs0_orig": ob,
                 "acs_orig": ac,
                 "obs1_orig": new_ob,
             }
-            agent.store_transition(transition)
             # add absorbing transition
-            _ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _ac_a = np.append(np.zeros(agent.ac_shape[-1]), 1)
-            _new_ob_a = np.append(np.zeros(agent.ob_shape[-1]), 1)
-            _rew_a = agent.get_syn_rew(
-                rearrange(_ob_a, "d -> 1 d"),
-                rearrange(_ac_a, "d -> 1 d"),
-                rearrange(_new_ob_a, "d -> 1 d")).numpy(force=True)
+            _ob_a = np.append(np.zeros(ob_shape[-1]), 1)
+            _ac_a = np.append(np.zeros(ac_shape[-1]), 1)
+            _new_ob_a = np.append(np.zeros(ob_shape[-1]), 1)
             transition_a = {
                 "obs0": _ob_a,
                 "acs": _ac_a,
                 "obs1": _new_ob_a,
-                "rews": _rew_a,
                 "dones1": done,
                 "obs0_orig": ob,  # from previous transition, with reward eval on absorbing
                 "acs_orig": ac,  # from previous transition, with reward eval on absorbing
                 "obs1_orig": new_ob,  # from previous transition, with reward eval on absorbing
             }
-            agent.store_transition(transition_a)
-        else:
-            _new_ob = np.append(new_ob, 0)
-            _rew = agent.get_syn_rew(
-                rearrange(_ob, "d -> 1 d"),
-                rearrange(_ac, "d -> 1 d"),
-                rearrange(_new_ob, "d -> 1 d")).numpy(force=True)
-            transition = {
-                "obs0": _ob,
-                "acs": _ac,
-                "obs1": _new_ob,
-                "rews": _rew,
-                "dones1": done,
-                "obs0_orig": ob,
-                "acs_orig": ac,
-                "obs1_orig": new_ob,
-            }
-            agent.store_transition(transition)
-    else:
-        if USE_ENV_REW:
-            rew = rearrange(np.array([env_rew]), "b -> b 1")
-            logger.warn("WARNING: using env rew!")
-        else:
-            rew = agent.get_syn_rew(
-                    rearrange(ob, "d -> 1 d"),
-                    rearrange(ac, "d -> 1 d"),
-                    rearrange(new_ob, "d -> 1 d")).numpy(force=True)
+            return [(transition, transition_a)]
+
+        _new_ob = np.append(new_ob, 0)
         transition = {
-            "obs0": ob,
-            "acs": ac,
-            "obs1": new_ob,
-            "rews": rew,
+            "obs0": _ob,
+            "acs": _ac,
+            "obs1": _new_ob,
             "dones1": done,
+            "obs0_orig": ob,
+            "acs_orig": ac,
+            "obs1_orig": new_ob,
         }
-        agent.store_transition(transition)
+        return [(transition,)]
 
-
-@beartype
-def postproc_vtr(num_envs: int,
-                 vtr: List[Any],
-                 agent: SPPAgent,
-                 *,
-                 wrap_absorb: bool):
-    for i in range(num_envs):
-        tr = [e[i] for e in vtr]
-        postproc_tr(tr, agent, wrap_absorb=wrap_absorb)
+    transition = {
+        "obs0": ob,
+        "acs": ac,
+        "obs1": new_ob,
+        "dones1": done,
+    }
+    return [(transition,)]
 
 
 @beartype
@@ -373,7 +371,8 @@ def learn(cfg: DictConfig,
 
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned segment, stored in buffer
-            agent.timesteps_so_far += cfg.segment_len
+            agent.timesteps_so_far += cfg.segment_len * int(cfg.numenv if cfg.vecenv else 1)
+            # when a vectorized env of n envs is used, we increment by n times the amount
 
         with timed("training"):
             for _ in range(cfg.training_steps_per_iter):

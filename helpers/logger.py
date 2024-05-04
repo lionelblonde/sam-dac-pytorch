@@ -333,7 +333,3 @@ def reset():
     if Logger.CURRENT is not Logger.DEFAULT:
         Logger.CURRENT = Logger.DEFAULT
         log("resetting logger")
-
-
-# configure a logger by default
-configure_default_logger()

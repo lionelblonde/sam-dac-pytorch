@@ -20,9 +20,6 @@ from agents.memory import ReplayBuffer
 from agents.spp_agent import SPPAgent
 
 
-DISABLE_LOGGER = False
-
-
 @beartype
 def make_uuid(num_syllables: int = 2, num_parts: int = 3) -> str:
     """Randomly create a semi-pronounceable uuid"""
@@ -57,6 +54,8 @@ def get_name(uuid: str, env_id: str, seed: int) -> str:
 
 class MagicRunner(object):
 
+    DISABLE_LOGGER: bool = False
+
     @beartype
     def __init__(self, cfg: str,  # give the relative path to cfg here
                  env_id: str,  # never in cfg: always give one in arg
@@ -66,6 +65,8 @@ class MagicRunner(object):
                  wandb_project: Optional[str] = None,  # is either given in arg (prio) or in cfg
                  uuid: Optional[str] = None,  # never in cfg, but not forced to give in arg either
                  load_ckpt: Optional[str] = None):  # same as uuid: from arg or nothing
+
+        logger.configure_default_logger()
 
         # retrieve config from filesystem
         proj_root = Path(__file__).resolve().parent
@@ -102,6 +103,9 @@ class MagicRunner(object):
 
         self.name = get_name(self._cfg.uuid, self._cfg.env_id, self._cfg.seed)
 
+        # slight overwrite for consistency, before setting to read-only
+        self._cfg.num_env = self._cfg.numenv if self._cfg.vecenv else 1
+
         # set the cfg to read-only for safety
         OmegaConf.set_readonly(self._cfg, value=True)
 
@@ -109,8 +113,8 @@ class MagicRunner(object):
     def train(self):
 
         # mlsys
-        numth = self._cfg.numenv if self._cfg.vecenv else 1
-        torch.set_num_threads(numth)  # TODO(lionel): keep an eye on this
+        torch.set_num_threads(self._cfg.num_env)
+        # TODO(lionel): keep an eye on this
 
         # set printing options
         np.set_printoptions(precision=3)
@@ -118,7 +122,7 @@ class MagicRunner(object):
         # name
         name = f"{self.name}.train_demos{str(self._cfg.num_demos).zfill(3)}"
         # logger
-        if DISABLE_LOGGER:
+        if self.DISABLE_LOGGER:
             logger.set_level(logger.DISABLED)  # turn the logging off
         else:
             log_path = Path(self._cfg.log_dir) / name
@@ -138,7 +142,7 @@ class MagicRunner(object):
         else:
             if self._cfg.mps:
                 assert torch.mps
-                # use Apple"s Metal Performance Shaders (MPS)
+                # use Apple's Metal Performance Shaders (MPS)
                 device = torch.device("mps:0")
             else:
                 # default case: just use plain old cpu, no cuda or m-chip gpu
@@ -170,12 +174,13 @@ class MagicRunner(object):
             max_ep_steps=max_episode_steps,
             wrap_absorb=self._cfg.wrap_absorb,
         )
-        replay_buffer = ReplayBuffer(
+        replay_buffers = [ReplayBuffer(
             np_rng=np_rng,
             capacity=self._cfg.mem_size,
             erb_shapes=erb_shapes,
-        )
-        logger.info(f"{replay_buffer} configured")
+        ) for _ in range(self._cfg.num_env)]
+        for i, rb in enumerate(replay_buffers):
+            logger.info(f"rb#{i} [[{rb}]] is set")
 
         def agent_wrapper():
             return SPPAgent(
@@ -184,7 +189,7 @@ class MagicRunner(object):
                 device=device,
                 hps=self._cfg,
                 expert_dataset=expert_dataset,
-                replay_buffer=replay_buffer,
+                replay_buffers=replay_buffers,
             )
 
         # create an evaluation environment not to mess up with training rollouts
