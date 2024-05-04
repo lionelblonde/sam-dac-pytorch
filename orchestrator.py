@@ -90,7 +90,6 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
                         pass
                     else:
                         agent.rms_obs.update(out_obs0[0:-1])
-
         # set current state with the next
         ob = deepcopy(new_ob)
 

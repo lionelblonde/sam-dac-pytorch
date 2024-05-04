@@ -197,18 +197,13 @@ class SPPAgent(object):
         # get a batch of transitions from replay buffer
         batches = defaultdict(list)
         for rb in self.replay_buffers:
-            if self.hps.n_step_returns:
-                batch = rb.lookahead_sample(
-                    self.hps.batch_size,
-                    self.hps.lookahead,
-                    self.hps.gamma,
-                    patcher=patcher,
-                )
-            else:
-                batch = rb.sample(
-                    self.hps.batch_size,
-                    patcher=patcher,
-                )
+            batch = rb.sample(
+                self.hps.batch_size,
+                patcher=patcher,
+                n_step_returns=self.hps.n_step_returns,
+                lookahead=self.hps.lookahead,
+                gamma=self.hps.gamma,
+            )
             for k, v in batch.items():
                 batches[k].append(v)
         out = {}

@@ -2,19 +2,10 @@ from collections import defaultdict
 from typing import Any, Optional, Callable
 
 from beartype import beartype
-from einops import rearrange
 import numpy as np
 from numpy.random import Generator
 
 from helpers.math_util import discount
-
-
-@beartype
-def array_min2d(x: np.ndarray) -> np.ndarray:
-    dim_thres = 2
-    if x.ndim >= dim_thres:
-        return x
-    return rearrange(x, "b -> b 1")
 
 
 class RingBuffer(object):
@@ -66,110 +57,79 @@ class ReplayBuffer(object):
                  erb_shapes: dict[str, tuple[Any, ...]]):
         self.np_rng = np_rng
         self.capacity = capacity
-        self.ring_buffers = {n: RingBuffer(self.capacity, s) for n, s in erb_shapes.items()}
+        self.ring_buffers = {k: RingBuffer(self.capacity, s) for k, s in erb_shapes.items()}
 
     @beartype
-    def batchify(self, idxs: np.ndarray) -> dict[str, np.ndarray]:
+    def get_trns(self, idxs: np.ndarray) -> dict[str, np.ndarray]:
         """Collect a batch from indices"""
-        transitions = {}
-        for n in self.ring_buffers:  # avoiding dict comprehension here: introspection
-            ll = self.ring_buffers[n].get_batch(idxs)
-            aa = array_min2d(ll)
-            transitions[n] = aa
-        transitions["idxs"] = idxs  # add idxs too
-        return transitions
+        trns = {}
+        for k, v in self.ring_buffers.items():
+            trns[k] = v.get_batch(idxs)
+        return trns
 
     @beartype
     def sample(self,
                batch_size: int,
+               *,
                patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
+               n_step_returns: bool = False,
+               lookahead: Optional[int] = None,
+               gamma: Optional[float] = None,
         ) -> dict[str, np.ndarray]:
         """Sample transitions uniformly from the replay buffer"""
         idxs = self.np_rng.integers(low=0, high=self.num_entries, size=batch_size)
-        transitions = self.batchify(idxs)
-        if patcher is not None:
-            # patch the rewards
-            transitions["rews"] = patcher(
-                transitions["obs0"],
-                transitions["acs"],
-                transitions["obs1"],
-            )
-        return transitions
-
-    @beartype
-    def lookahead(self,
-                  transitions: dict[str, np.ndarray],
-                  n: int,
-                  gamma: float,
-                  patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
-        ) -> dict[str, np.ndarray]:
-        """Perform n-step TD lookahead estimations starting from every transition"""
-        assert 0 <= gamma <= 1
-
-        # initiate the batch of transition data necessary to perform n-step TD backups
-        la_batch = defaultdict(list)
-
-        # iterate over the indices to deploy the n-step backup for each
-        for idx in transitions["idxs"]:
-            # create indexes of transitions in lookahead of lengths max `n` following sampled one
-            la_end_idx = min(idx + n, self.num_entries) - 1
-            la_idxs = np.array(range(idx, la_end_idx + 1))
-            # collect the batch for the lookahead rollout indices
-            la_transitions = self.batchify(la_idxs)
+        if n_step_returns:
+            assert lookahead is not None and gamma is not None
+            assert 0 <= gamma <= 1
+            # initiate the batch of transition data necessary to perform n-step TD backups
+            la_batch = defaultdict(list)
+            # iterate over the indices to deploy the n-step backup for each
+            for idx in idxs:
+                # create indexes of transitions in lookahead
+                # of lengths max `lookahead` following sampled one
+                la_end_idx = min(idx + lookahead, self.num_entries) - 1
+                la_idxs = np.array(range(idx, la_end_idx + 1))
+                # collect the batch for the lookahead rollout indices
+                la_trns = self.get_trns(la_idxs)
+                if patcher is not None:
+                    # patch the rewards
+                    la_trns["rews"] = patcher(la_trns["obs0"], la_trns["acs"], la_trns["obs1"])
+                # only keep data from the current episode,
+                # drop everything after episode reset, if any
+                dones = la_trns["dones1"]
+                term_idx = 1.0
+                ep_end_idx = idx + list(dones).index(1.0) if term_idx in dones else la_end_idx
+                la_is_trimmed = 0.0 if ep_end_idx == la_end_idx else 1.0
+                # compute lookahead length
+                td_len = ep_end_idx - idx + 1
+                # trim down the lookahead transitions
+                la_rews = la_trns["rews"][:td_len]
+                # compute discounted cumulative reward
+                la_discounted_sum_n_rews = discount(la_rews, gamma)[0]  # is a np.ndarray
+                # populate the batch for this n-step TD backup
+                la_batch["obs0"].append(la_trns["obs0"][0])
+                la_batch["obs1"].append(la_trns["obs1"][td_len - 1])
+                la_batch["acs"].append(la_trns["acs"][0])
+                la_batch["rews"].append(la_discounted_sum_n_rews)
+                la_batch["dones1"].append(np.array([la_is_trimmed]))  # made into np.ndarray
+                la_batch["td_len"].append(np.array([td_len]))  # made into np.ndarray
+                # add the first next state too: needed in state-only discriminator
+                la_batch["obs1_td1"].append(la_trns["obs1"][0])
+                # when dealing with absorbing states
+                if "obs0_orig" in la_trns:
+                    la_batch["obs0_orig"].append(la_trns["obs0_orig"][0])
+                if "obs1_orig" in la_trns:
+                    la_batch["obs1_orig"].append(la_trns["obs1_orig"][td_len - 1])
+                if "acs_orig" in la_trns:
+                    la_batch["acs_orig"].append(la_trns["acs_orig"][0])
+            # turn the list defaultdict into a dict of np.ndarray
+            trns = {k: np.array(v) for k, v in la_batch.items()}
+        else:
+            trns = self.get_trns(idxs)
             if patcher is not None:
                 # patch the rewards
-                la_transitions["rews"] = patcher(
-                    la_transitions["obs0"],
-                    la_transitions["acs"],
-                    la_transitions["obs1"],
-                )
-            # only keep data from the current episode, drop everything after episode reset, if any
-            dones = la_transitions["dones1"]
-            term_idx = 1.0
-            ep_end_idx = idx + list(dones).index(1.0) if term_idx in dones else la_end_idx
-            la_is_trimmed = 0.0 if ep_end_idx == la_end_idx else 1.0
-            # compute lookahead length
-            td_len = ep_end_idx - idx + 1
-            # trim down the lookahead transitions
-            la_rews = la_transitions["rews"][:td_len]
-            # compute discounted cumulative reward
-            la_discounted_sum_n_rews = discount(la_rews, gamma)[0]
-            # populate the batch for this n-step TD backup
-            la_batch["obs0"].append(la_transitions["obs0"][0])
-            la_batch["obs1"].append(la_transitions["obs1"][td_len - 1])
-            la_batch["acs"].append(la_transitions["acs"][0])
-            la_batch["rews"].append(la_discounted_sum_n_rews)
-            la_batch["dones1"].append(la_is_trimmed)
-            la_batch["td_len"].append(td_len)
-
-            # add the first next state too: needed in state-only discriminator
-            la_batch["obs1_td1"].append(la_transitions["obs1"][0])
-
-            # when dealing with absorbing states
-            if "obs0_orig" in la_transitions:
-                la_batch["obs0_orig"].append(la_transitions["obs0_orig"][0])
-            if "obs1_orig" in la_transitions:
-                la_batch["obs1_orig"].append(la_transitions["obs1_orig"][td_len - 1])
-            if "acs_orig" in la_transitions:
-                la_batch["acs_orig"].append(la_transitions["acs_orig"][0])
-
-        la_batch["idxs"] = [transitions["idxs"]]  # in list for type-checker
-
-        return {k: array_min2d(np.array(v)) for k, v in la_batch.items()}
-
-    @beartype
-    def la_sample(self,
-                  batch_size: int,
-                  n: int,
-                  gamma: float,
-                  patcher: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]],
-        ) -> dict[str, np.ndarray]:
-        # sample a batch of transitions
-        transitions = self.sample(batch_size, patcher)
-        # expand each transition with a n-step TD lookahead
-        return self.lookahead(transitions, n, gamma, patcher)
-
-    lookahead_sample = la_sample  # alias for more legibility in agent file
+                trns["rews"] = patcher(trns["obs0"], trns["acs"], trns["obs1"])
+        return trns
 
     @beartype
     def append(self, transition: dict[str, np.ndarray]):
