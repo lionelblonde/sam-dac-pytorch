@@ -3,6 +3,14 @@
 PyTorch implementation (with up-to-date tooling) of the SAM / DAC algorithm,
 which are sample-efficient adversarial imitation learning techniques.
 
+While the previous versions were using an MPI-based distribution scheme,
+the current version aligns with the current practises consisting in using vectorized environments.
+
+The agents developed interface with environments using the Gymnasium API.
+As such, adapting the code to support non-addressed environments that follow this API should be
+automatic at best, and fairly straightforward at worst.
+No extension to other APIs is planned at this time.
+
 ## Dependencies
 
 ### Python
