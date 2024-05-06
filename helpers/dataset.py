@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Union
 import h5py
 from beartype import beartype
+from einops import rearrange, pack
 import numpy as np
 from numpy.random import Generator
 from torch.utils.data import Dataset
@@ -90,11 +91,6 @@ class DemoDataset(DictDataset):
             else:
                 logger.info("keys properly removed")
 
-            # extract and display content dims
-            dims = {k: tmp[k].shape[1:] for k in tmp}
-            dims = " | ".join([f"{k}={v}" for k, v in dims.items()])
-            logger.info(f"[DEMO DATASET] dims: {dims}")
-
             # get episode statistics
             try:
                 self.ep_len = tmp.pop("ep_lens")  # return and delete key
@@ -125,63 +121,52 @@ class DemoDataset(DictDataset):
 
             # collect the demo content
             if wrap_absorb:
+
+                # add the originals in case we need them
+                self.data["obs0_orig"].append(tmp["obs0"])
+                self.data["acs_orig"].append(tmp["acs"])
+                self.data["obs1_orig"].append(tmp["obs1"])
+
+                # treat differently depending on whether we have a terminal transition
                 if tmp["dones1"][-1] and terminal:
-                    # if the last subsampled transition is done, then it must be
+                    # if the last transition of the subsampled trajectory is done, then it must be
                     # the very last transition of the episode, and testing whether it is
                     # a true terminal state is given by "terminal" determined above
                     logger.info("[DEMO DATASET]::wrapping with absorbing transition")
-                    # wrap with an absorbing state
-                    obs0 = np.concatenate(
-                        [tmp["obs0"],
-                         np.zeros((ep_len, 1))],
-                        axis=-1,
-                    )
-                    acs = np.concatenate(
-                        [tmp["acs"],
-                         np.zeros((ep_len, 1))],
-                        axis=-1,
-                    )
-                    obs1 = np.concatenate(
-                        [tmp["obs1"],
-                         np.concatenate(
-                            [np.zeros((ep_len - 1, 1)),
-                             np.ones((1, 1))],
-                            axis=0)],
-                        axis=-1,
-                    )
-                    # add absorbing transition
-                    obs0 = np.concatenate([
-                        obs0,
-                        np.expand_dims(np.append(np.zeros_like(tmp["obs0"][-1]), 1), axis=0),
-                    ], axis=0)
-                    acs = np.concatenate([
-                        acs,
-                        np.expand_dims(np.append(np.zeros_like(tmp["acs"][-1]), 1), axis=0),
-                    ], axis=0)
-                    obs1 = np.concatenate([
-                        obs1,
-                        np.expand_dims(np.append(np.zeros_like(tmp["obs1"][-1]), 1), axis=0),
-                    ], axis=0)
-                    self.data["obs0"].append(obs0)
-                    self.data["acs"].append(acs)
-                    self.data["obs1"].append(obs1)
-                else:
-                    self.data["obs0"].append(np.concatenate([
-                        tmp["obs0"],
-                        np.zeros((ep_len, 1)),
-                    ], axis=-1))
-                    self.data["acs"].append(np.concatenate([
-                        tmp["acs"],
-                        np.zeros((ep_len, 1)),
-                    ], axis=-1))
-                    self.data["obs1"].append(np.concatenate([
-                        tmp["obs1"],
-                        np.zeros((ep_len, 1)),
-                    ], axis=-1))
 
-                self.data["obs0_orig"].append(tmp["obs0"])
+                    # wrap transition with an absorbing state
+                    # add lines of zeros: one for each ob of obs0 and each ac of acs
+                    obs0, _ = pack([tmp["obs0"], np.zeros((ep_len, 1))], "b *")
+                    acs, _ = pack([tmp["acs"], np.zeros((ep_len, 1))], "b *")
+                    # add a line of zeros except the last one: one zero for each ob of obs1
+                    # except the last one (terminal ob) to which a one is concatenated
+                    zeros_and_one, _ = pack([np.zeros((ep_len - 1, 1)), np.ones((1, 1))], "* d")
+                    obs1, _ = pack([tmp["obs1"], zeros_and_one], "b *")
+
+                    # add absorbing transition: done by concatenating a row to previous matrices
+                    obs0_last_row = np.append(np.zeros_like(tmp["obs0"][-1]), 1)
+                    obs0_last_row = rearrange(obs0_last_row, "b -> 1 b")  # replaces np.expand_dims
+                    obs0, _ = pack([obs0, obs0_last_row], "* d")
+                    acs_last_row = np.append(np.zeros_like(tmp["acs"][-1]), 1)
+                    acs_last_row = rearrange(acs_last_row, "b -> 1 b")  # replaces np.expand_dims
+                    acs, _ = pack([acs, acs_last_row], "* d")
+                    obs1_last_row = np.append(np.zeros_like(tmp["obs1"][-1]), 1)
+                    obs1_last_row = rearrange(obs1_last_row, "b -> 1 b")  # replaces np.expand_dims
+                    obs1, _ = pack([obs1, obs1_last_row], "* d")
+                else:
+                    # the last transition of the subsampled trajectory is not a terminal one,
+                    # so we just add a zero to each row of obs0, acs, and obs1 to indicate that
+                    obs0, _ = pack([tmp["obs0"], np.zeros((ep_len, 1))], "b *")
+                    acs, _ = pack([tmp["acs"], np.zeros((ep_len, 1))], "b *")
+                    obs1, _ = pack([tmp["obs1"], np.zeros((ep_len, 1))], "b *")
+
+                # collect the extracted and processed contents
+                self.data["obs0"].append(obs0)
+                self.data["acs"].append(acs)
+                self.data["obs1"].append(obs1)
 
             else:
+                # if not wrapping the absorbing states, the originals is what we use
                 self.data["obs0"].append(tmp["obs0"])
                 self.data["acs"].append(tmp["acs"])
                 self.data["obs1"].append(tmp["obs1"])
@@ -190,13 +175,14 @@ class DemoDataset(DictDataset):
         self.np_stats, self.np_data = {}, {}
         for k, v in self.stats.items():
             self.np_stats[k] = np.array(v)
+        logger.info("[DEMO DATASET]::keys extracted:")
         for k, v in self.data.items():
-            self.np_data[k] = np.concatenate(v, axis=0)
+            self.np_data[k], _ = (test := pack(v, "* d"))
+            logger.info(f"        {k=} shape={test[0].shape}")
 
         self.stats = self.np_stats
         self.data = self.np_data
 
-        logger.info(f"[DEMO DATASET]::keys extracted: {list(self.data.keys())}")
         lens, rets = self.stats["ep_len"], self.stats["ep_ret"]
         logger.info(f"[DEMO DATASET]::got {len(self)} transitions, from {self.num_demos} eps")
         logger.info(f"[DEMO DATASET]::episodic length: {np.mean(lens)}({np.std(lens)})")
