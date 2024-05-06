@@ -14,7 +14,7 @@ render: false
 
 # training
 num_timesteps: 10000000
-training_steps_per_iter: 16
+training_steps_per_iter: 4
 eval_steps_per_iter: 10
 eval_every: 100
 
@@ -61,6 +61,7 @@ d_steps: 1
 d_lr: 5.0e-4
 state_only: false
 minimax_only: true
+d_label_smooth: 0.25
 ent_reg_scale: 0.0001
 spectral_norm: true
 grad_pen: true

@@ -52,7 +52,8 @@ class SPPAgent(object):
         assert self.hps.lookahead > 1 or not self.hps.n_step_returns
         assert self.hps.segment_len <= self.hps.batch_size
         if self.hps.clip_norm <= 0:
-            logger.info("clip_norm <= 0, hence disabled.")
+            logger.info("clip_norm <= 0, hence disabled")
+        assert 0. <= float(self.hps.d_label_smooth) <= 1.
 
         # demo dataset
         self.expert_dataset = expert_dataset
@@ -541,8 +542,11 @@ class SPPAgent(object):
             fake_labels = 0. * torch.ones_like(p_scores).to(self.device)
             real_labels = 1. * torch.ones_like(e_scores).to(self.device)
 
-            # apply label smoothing to real labels
-            real_labels.uniform_(0.8, 1.2)
+            # apply label smoothing to real labels (one-sided label smoothing)
+            # real_labels.uniform_(0.8, 1.2)  # TODO(lionel): fix this
+            if (offset := self.hps.d_label_smooth) != 0:
+                real_labels -= offset  # using "-=" to make the op in-place: faster, less mem
+                logger.info("applied one-sided label smoothing")
 
             # binary classification
             p_loss = ff.binary_cross_entropy_with_logits(
