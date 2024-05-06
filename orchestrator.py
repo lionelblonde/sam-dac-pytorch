@@ -132,30 +132,30 @@ def postproc_tr(tr: list[np.ndarray],
 
     if wrap_absorb:
 
-        _ob = np.append(ob, 0)
-        _ac = np.append(ac, 0)
+        ob_0 = np.append(ob, 0)
+        ac_0 = np.append(ac, 0)
 
         # previously this was the cond: `done and env._elapsed_steps != env._max_episode_steps`
         if terminated:
             # wrap with an absorbing state
-            _new_ob = np.append(np.zeros(ob_shape[-1]), 1)
+            new_ob_zeros_1 = np.append(np.zeros(ob_shape[-1]), 1)
             transition = {
-                "obs0": _ob,
-                "acs": _ac,
-                "obs1": _new_ob,
+                "obs0": ob_0,
+                "acs": ac_0,
+                "obs1": new_ob_zeros_1,
                 "dones1": done,
                 "obs0_orig": ob,
                 "acs_orig": ac,
                 "obs1_orig": new_ob,
             }
             # add absorbing transition
-            _ob_a = np.append(np.zeros(ob_shape[-1]), 1)
-            _ac_a = np.append(np.zeros(ac_shape[-1]), 1)
-            _new_ob_a = np.append(np.zeros(ob_shape[-1]), 1)
+            ob_zeros_1 = np.append(np.zeros(ob_shape[-1]), 1)
+            ac_zeros_1 = np.append(np.zeros(ac_shape[-1]), 1)
+            new_ob_zeros_1 = np.append(np.zeros(ob_shape[-1]), 1)
             transition_a = {
-                "obs0": _ob_a,
-                "acs": _ac_a,
-                "obs1": _new_ob_a,
+                "obs0": ob_zeros_1,
+                "acs": ac_zeros_1,
+                "obs1": new_ob_zeros_1,
                 "dones1": done,
                 "obs0_orig": ob,  # from previous transition, with reward eval on absorbing
                 "acs_orig": ac,  # from previous transition, with reward eval on absorbing
@@ -163,11 +163,11 @@ def postproc_tr(tr: list[np.ndarray],
             }
             return [(transition, transition_a)]
 
-        _new_ob = np.append(new_ob, 0)
+        new_ob_0 = np.append(new_ob, 0)
         transition = {
-            "obs0": _ob,
-            "acs": _ac,
-            "obs1": _new_ob,
+            "obs0": ob_0,
+            "acs": ac_0,
+            "obs1": new_ob_0,
             "dones1": done,
             "obs0_orig": ob,
             "acs_orig": ac,
