@@ -2,6 +2,7 @@ from collections import OrderedDict
 from typing import Callable
 
 from beartype import beartype
+from einops import rearrange, pack
 import torch
 from torch import nn
 from torch.nn import functional as ff
@@ -127,12 +128,12 @@ class Discriminator(nn.Module):
                 # normalize state
                 input_a_ = input_a.clone()[:, 0:-1]
                 input_a_ = self.rms_obs.standardize(input_a_).clamp(*STANDARDIZED_OB_CLAMPS)
-                input_a = torch.cat([input_a_, input_a[:, -1].unsqueeze(-1)], dim=-1)
+                input_a, _ = pack([input_a_, rearrange(input_a[:, -1], "b -> b 1")], "b *")
                 if self.state_only:
                     # normalize next state
                     input_b_ = input_b.clone()[:, 0:-1]
                     input_b_ = self.rms_obs.standardize(input_b_).clamp(*STANDARDIZED_OB_CLAMPS)
-                    input_b = torch.cat([input_b_, input_b[:, -1].unsqueeze(-1)], dim=-1)
+                    input_b, _ = pack([input_b_, rearrange(input_b[:, -1], "b -> b 1")], "b *")
             else:
                 # normalize state
                 input_a = self.rms_obs.standardize(input_a).clamp(*STANDARDIZED_OB_CLAMPS)
@@ -143,8 +144,7 @@ class Discriminator(nn.Module):
             input_a = input_a.clamp(*STANDARDIZED_OB_CLAMPS)
             if self.state_only:
                 input_b = input_b.clamp(*STANDARDIZED_OB_CLAMPS)
-        # concatenate
-        x = torch.cat([input_a, input_b], dim=-1)
+        x, _ = pack([input_a, input_b], "b *")  # concatenate along last dim
         x = self.fc_stack(x)
         return self.d_head(x)  # no sigmoid here
 
@@ -258,7 +258,7 @@ class Critic(nn.Module):
     @beartype
     def forward(self, ob, ac):
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
-        x = torch.cat([ob, ac], dim=-1)
+        x, _ = pack([ob, ac], "b *")
         x = self.fc_stack(x)
         x = self.head(x)
         if self.use_c51:

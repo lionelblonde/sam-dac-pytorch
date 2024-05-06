@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from beartype import beartype
 from omegaconf import DictConfig
-from einops import repeat, rearrange
+from einops import repeat, rearrange, pack
 import wandb
 import numpy as np
 import torch
@@ -210,7 +210,7 @@ class SPPAgent(object):
                 batches[k].append(v)
         out = {}
         for k, v in batches.items():
-            out[k] = rearrange(v, "n b d -> (n b) d")
+            out[k], _ = pack(v, "* d")  # equiv to: rearrange(v, "n b d -> (n b) d")
         return out
 
     @beartype
@@ -520,7 +520,7 @@ class SPPAgent(object):
             e_scores = self.disc(e_input_a, e_input_b)
 
             # entropy loss
-            scores = torch.cat([p_scores, e_scores], dim=0)
+            scores, _ = pack([p_scores, e_scores], "* d")  # concat along the batch dim, d is 1
             entropy = ff.binary_cross_entropy_with_logits(
                 input=scores,
                 target=torch.sigmoid(scores),
@@ -607,8 +607,8 @@ class SPPAgent(object):
         assert len(list(grads)) == len(inputs), "length must be exactly 2"
 
         # return the gradient penalty
-        grads = torch.cat(list(grads), dim=-1)
-        grads_norm = grads.norm(2, dim=-1)
+        packed_grads, _ = pack(list(grads), "b *")
+        grads_norm = packed_grads.norm(2, dim=-1)
 
         if self.hps.one_sided_pen:
             # penalize the gradient for having a norm GREATER than k
