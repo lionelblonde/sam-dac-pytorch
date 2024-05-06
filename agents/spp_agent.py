@@ -478,7 +478,6 @@ class SPPAgent(object):
     def update_disc(self, batch: dict[str, np.ndarray]):
 
         assert self.expert_dataset is not None
-        p_e_loss, entropy_loss, grad_pen = None, None, None
 
         # filter out the keys we want
         d_keys = ["obs0"]
@@ -552,6 +551,7 @@ class SPPAgent(object):
         # sum losses
         disc_loss = p_e_loss + entropy_loss
 
+        grad_pen = None
         if self.hps.grad_pen:
             # add gradient penalty to loss
             grad_pen = self.grad_pen(p_input_a, p_input_b, e_input_a, e_input_b)
@@ -566,10 +566,10 @@ class SPPAgent(object):
 
         metrics = {}
         # populate metrics with the latest values
-        if entropy_loss is not None:
-            metrics["entropy_loss"] = entropy_loss.numpy(force=True)
-        if p_e_loss is not None:
-            metrics["p_e_loss"] = p_e_loss.numpy(force=True)
+        metrics["entropy_loss"] = entropy_loss.numpy(force=True)
+        metrics["p_loss"] = p_loss.numpy(force=True)
+        metrics["e_loss"] = e_loss.numpy(force=True)
+        metrics["p_e_loss"] = p_e_loss.numpy(force=True)
         if self.hps.grad_pen and grad_pen is not None:
             metrics["grad_pen"] = grad_pen.numpy(force=True)
         self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob="train_disc")
