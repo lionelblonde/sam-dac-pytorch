@@ -377,7 +377,7 @@ def learn(cfg: DictConfig,
         with timed("training"):
             for _ in range(cfg.training_steps_per_iter):
 
-                for _ in range(agent.hps["g_steps"]):
+                for _ in range(cfg.g_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # determine if updating the actr
@@ -389,7 +389,7 @@ def learn(cfg: DictConfig,
                         update_actr=update_actr,
                     )  # counters for actr and crit updates are incremented internally!
 
-                for _ in range(agent.hps["d_steps"]):
+                for _ in range(cfg.d_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # update the discriminator
