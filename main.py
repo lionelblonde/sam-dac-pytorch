@@ -174,13 +174,15 @@ class MagicRunner(object):
             max_ep_steps=max_episode_steps,
             wrap_absorb=self._cfg.wrap_absorb,
         )
+        logger.info(f"[{expert_dataset}] is set")
+
         replay_buffers = [ReplayBuffer(
             np_rng=np_rng,
             capacity=self._cfg.mem_size,
             erb_shapes=erb_shapes,
         ) for _ in range(self._cfg.num_env)]
         for i, rb in enumerate(replay_buffers):
-            logger.info(f"rb#{i} [[{rb}]] is set")
+            logger.info(f"rb#{i} [{rb}] is set")
 
         def agent_wrapper():
             return SPPAgent(

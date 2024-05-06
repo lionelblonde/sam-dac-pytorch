@@ -16,7 +16,7 @@ from torch import autograd
 
 from helpers import logger
 from helpers.normalizer import RunningMoments
-from helpers.dataset import DictDataset, DemoDataset
+from helpers.dataset import DemoDataset
 from helpers.math_util import huber_quant_reg_loss
 from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.ac_noise import NormalActionNoise
@@ -477,9 +477,10 @@ class SPPAgent(object):
     @beartype
     def update_disc(self, batch: dict[str, np.ndarray]):
 
+        assert self.expert_dataset is not None
         p_e_loss, entropy_loss, grad_pen = None, None, None
 
-        # create DataLoader object to iterate over transitions in rollouts
+        # filter out the keys we want
         d_keys = ["obs0"]
         if self.hps.state_only:
             if self.hps.n_step_returns:
@@ -488,81 +489,81 @@ class SPPAgent(object):
                 d_keys.append("obs1")
         else:
             d_keys.append("acs")
-        d_dataset = DictDataset({k: batch[k] for k in d_keys})  # own dataset class
 
-        d_dataloader = DataLoader(  # native dataloader
-            d_dataset,
-            self.e_batch_size,
-            shuffle=True,
-            drop_last=True,
-        )
+        # filter out unwanted keys and tensor-ify
+        p_batch = {k: torch.Tensor(batch[k]) for k in d_keys}
 
-        for e_batch in self.e_dataloader:
+        # get a batch of samples from the expert dataset
+        e_batches = defaultdict(list)
+        for _ in range(self.hps.num_env):
+            e_batch = self.expert_dataset.sample(self.hps.batch_size, keys=d_keys)
+            for k, v in e_batch.items():
+                e_batches[k].append(v)
+        e_batch = {}
+        for k, v in e_batches.items():
+            e_batch[k], _ = pack(v, "* d")  # equiv to: rearrange(v, "n b d -> (n b) d")
+            e_batch[k] = torch.Tensor(e_batch[k])
 
-            # get a minibatch of policy data
-            d_batch = next(iter(d_dataloader))
-
-            # transfer to device
-            p_input_a = d_batch["obs0"].to(self.device)
-            e_input_a = e_batch["obs0"].to(self.device)
-            if self.hps.state_only:
-                if self.hps.n_step_returns:
-                    p_input_b = d_batch["obs1_td1"].to(self.device)
-                else:
-                    p_input_b = d_batch["obs1"].to(self.device)
-                e_input_b = e_batch["obs1"].to(self.device)
+        # transfer to device
+        p_input_a = p_batch["obs0"].to(self.device)
+        e_input_a = e_batch["obs0"].to(self.device)
+        if self.hps.state_only:
+            if self.hps.n_step_returns:
+                p_input_b = p_batch["obs1_td1"].to(self.device)
             else:
-                p_input_b = d_batch["acs"].to(self.device)
-                e_input_b = e_batch["acs"].to(self.device)
+                p_input_b = p_batch["obs1"].to(self.device)
+            e_input_b = e_batch["obs1"].to(self.device)
+        else:
+            p_input_b = p_batch["acs"].to(self.device)
+            e_input_b = e_batch["acs"].to(self.device)
 
-            # compute scores
-            p_scores = self.disc(p_input_a, p_input_b)
-            e_scores = self.disc(e_input_a, e_input_b)
+        # compute scores
+        p_scores = self.disc(p_input_a, p_input_b)
+        e_scores = self.disc(e_input_a, e_input_b)
 
-            # entropy loss
-            scores, _ = pack([p_scores, e_scores], "* d")  # concat along the batch dim, d is 1
-            entropy = ff.binary_cross_entropy_with_logits(
-                input=scores,
-                target=torch.sigmoid(scores),
-            )
-            entropy_loss = -self.hps.ent_reg_scale * entropy
+        # entropy loss
+        scores, _ = pack([p_scores, e_scores], "* d")  # concat along the batch dim, d is 1
+        entropy = ff.binary_cross_entropy_with_logits(
+            input=scores,
+            target=torch.sigmoid(scores),
+        )
+        entropy_loss = -self.hps.ent_reg_scale * entropy
 
-            # create labels
-            fake_labels = 0. * torch.ones_like(p_scores).to(self.device)
-            real_labels = 1. * torch.ones_like(e_scores).to(self.device)
+        # create labels
+        fake_labels = 0. * torch.ones_like(p_scores).to(self.device)
+        real_labels = 1. * torch.ones_like(e_scores).to(self.device)
 
-            # apply label smoothing to real labels (one-sided label smoothing)
-            # real_labels.uniform_(0.8, 1.2)  # TODO(lionel): fix this
-            if (offset := self.hps.d_label_smooth) != 0:
-                real_labels -= offset  # using "-=" to make the op in-place: faster, less mem
-                logger.info("applied one-sided label smoothing")
+        # apply label smoothing to real labels (one-sided label smoothing)
+        # real_labels.uniform_(0.8, 1.2)  # TODO(lionel): fix this
+        if (offset := self.hps.d_label_smooth) != 0:
+            real_labels -= offset  # using "-=" to make the op in-place: faster, less mem
+            logger.info("applied one-sided label smoothing")
 
-            # binary classification
-            p_loss = ff.binary_cross_entropy_with_logits(
-                input=p_scores,
-                target=fake_labels,
-            )
-            e_loss = ff.binary_cross_entropy_with_logits(
-                input=e_scores,
-                target=real_labels,
-            )
-            p_e_loss = p_loss + e_loss
+        # binary classification
+        p_loss = ff.binary_cross_entropy_with_logits(
+            input=p_scores,
+            target=fake_labels,
+        )
+        e_loss = ff.binary_cross_entropy_with_logits(
+            input=e_scores,
+            target=real_labels,
+        )
+        p_e_loss = p_loss + e_loss
 
-            # sum losses
-            disc_loss = p_e_loss + entropy_loss
+        # sum losses
+        disc_loss = p_e_loss + entropy_loss
 
-            if self.hps.grad_pen:
-                # add gradient penalty to loss
-                grad_pen = self.grad_pen(p_input_a, p_input_b, e_input_a, e_input_b)
-                disc_loss += (self.hps.grad_pen_scale * grad_pen)
+        if self.hps.grad_pen:
+            # add gradient penalty to loss
+            grad_pen = self.grad_pen(p_input_a, p_input_b, e_input_a, e_input_b)
+            disc_loss += (self.hps.grad_pen_scale * grad_pen)
 
-            # update parameters
-            self.disc_opt.zero_grad()
-            disc_loss.backward()
-            self.disc_opt.step()
+        # update parameters
+        self.disc_opt.zero_grad()
+        disc_loss.backward()
+        self.disc_opt.step()
 
         self.disc_updates_so_far += 1  # count this as one update
-        # TODO(lionel): need to align this better with how other modules are trained
 
         metrics = {}
         # populate metrics with the latest values

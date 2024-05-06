@@ -61,6 +61,7 @@ class DemoDataset(DictDataset):
         logger.info("creating dataset")
         logger.info(f"spec::expert path: {expert_path}")
         logger.info(f"spec::num_demos: {num_demos}")
+        self.np_rng = np_rng
         self.num_demos = num_demos
         self.stats, self.data = defaultdict(list), defaultdict(list)
         logger.info("::::loading demos")
@@ -112,7 +113,7 @@ class DemoDataset(DictDataset):
 
             # subsample trajectory: trajectories are not contiguous sequences
             sub_rate = 20  # N=20 in the original GAIL paper
-            start = np_rng.integers(low=0, high=sub_rate)
+            start = self.np_rng.integers(low=0, high=sub_rate)
             indices = [start + (i * sub_rate) for i in range(self.ep_len // sub_rate)]
             ep_len = len(indices)  # overwrite ep_len
 
@@ -200,3 +201,17 @@ class DemoDataset(DictDataset):
         logger.info(f"[DEMO DATASET]::got {len(self)} transitions, from {self.num_demos} eps")
         logger.info(f"[DEMO DATASET]::episodic length: {np.mean(lens)}({np.std(lens)})")
         logger.info(f"[DEMO DATASET]::episodic return: {np.mean(rets)}({np.std(rets)})")
+
+    @beartype
+    def sample(self, batch_size: int, keys: list[str]) -> dict[str, np.ndarray]:
+        idxs = self.np_rng.integers(low=0, high=len(self), size=batch_size)
+        samples = {}
+        for k, v in self.data.items():
+            if k not in keys:
+                continue
+            samples[k] = v[idxs]
+        return samples
+
+    @beartype
+    def __repr__(self) -> str:
+        return f"DemoDataset(num_demos={self.num_demos})"
