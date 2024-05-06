@@ -534,9 +534,8 @@ class SPPAgent(object):
         real_labels = 1. * torch.ones_like(e_scores).to(self.device)
 
         # apply label smoothing to real labels (one-sided label smoothing)
-        # real_labels.uniform_(0.8, 1.2)  # TODO(lionel): fix this
         if (offset := self.hps.d_label_smooth) != 0:
-            real_labels -= offset  # using "-=" to make the op in-place: faster, less mem
+            real_labels.uniform_(1. - offset, 1. + offset)  # TODO(lionel): fix this
             logger.info("applied one-sided label smoothing")
 
         # binary classification
