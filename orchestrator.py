@@ -36,6 +36,8 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
     assert isinstance(env.action_space, gym.spaces.Box)  # to ensure `high` and `low` exist
     ac_low, ac_high = env.action_space.low, env.action_space.high
 
+    assert agent.replay_buffers is not None
+
     t = 0
 
     ob, _ = env.reset(seed=seed)  # seed is a keyword argument, not positional
