@@ -542,7 +542,7 @@ class SPPAgent(object):
             real_labels = 1. * torch.ones_like(e_scores).to(self.device)
 
             # apply label smoothing to real labels
-            real_labels.uniform_(0.7, 1.2)
+            real_labels.uniform_(0.8, 1.2)
 
             # binary classification
             p_loss = ff.binary_cross_entropy_with_logits(
@@ -561,8 +561,7 @@ class SPPAgent(object):
             if self.hps.grad_pen:
                 # add gradient penalty to loss
                 grad_pen = self.grad_pen(p_input_a, p_input_b, e_input_a, e_input_b)
-                grad_pen *= self.hps.grad_pen_scale
-                disc_loss += grad_pen
+                disc_loss += (self.hps.grad_pen_scale * grad_pen)
 
             # update parameters
             self.disc_opt.zero_grad()
