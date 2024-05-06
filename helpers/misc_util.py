@@ -1,14 +1,22 @@
 import time
-from enum import IntEnum
 from contextlib import contextmanager
 
 from beartype import beartype
+from termcolor import colored
 
 from helpers import logger
 
 
 @beartype
-def prettify_time(seconds: int):
+def prettify_numb(n: int) -> str:
+    """Display an integer number of millions, ks, etc."""
+    m, k = divmod(n, 1_000_000)
+    k, u = divmod(k, 1_000)
+    return colored(f"{m}M {k}K {u}U", "red", attrs=["reverse"])
+
+
+@beartype
+def prettify_time(seconds: int) -> str:
     """Print the number of seconds in human-readable format.
     e.g. "2 days", "2 hours and 37 minutes", "less than a minute".
     """
@@ -41,39 +49,16 @@ def prettify_time(seconds: int):
     return "less than a minute"
 
 
-class Colors(IntEnum):
-    GRAY = 30
-    RED = 31
-    GREEN = 32
-    YELLOW = 33
-    BLUE = 34
-    MAGENTA = 35
-    CYAN = 36
-    WHITE = 37
-    CRIMSON = 38
-
-
-@beartype
-def colorize(string: str, color: Colors, *, bold=False, highlight=False) -> str:
-    attr = []
-    num: int = Colors[color.name]
-    if highlight:
-        num += 10
-    bold_indicator = "1" if bold else ""
-    attr = f"{num};{bold_indicator}"
-    return f"\x1b[{attr}m{string}\x1b[0m"
-
-
 @beartype
 @contextmanager
 def timed(text: str):
     pre_mess = f"::{text}::"
-    logger.info(colorize(pre_mess, Colors.GRAY))
+    logger.info(colored(pre_mess, "magenta", attrs=["underline", "bold"]))
     tstart = time.time()
     yield
     tot_time = time.time() - tstart
-    post_mess = f"done in {tot_time:.3f} seconds".rjust(50, ":")
-    logger.info(colorize(post_mess, Colors.CYAN))
+    post_mess = f"done in {tot_time}secs".rjust(50, ":")
+    logger.info(colored(post_mess, "magenta"))
 
 
 @beartype
@@ -81,4 +66,4 @@ def log_iter_info(cur_iter: int, tot_num_iters: int, tstart: float):
     """Display the current iteration and elapsed time"""
     elapsed = prettify_time(int(time.time() - tstart))
     mess = f"iter [{cur_iter}/{tot_num_iters}] <- elapsed time: {elapsed}".rjust(75, ":")
-    logger.info(colorize(mess, Colors.CRIMSON))
+    logger.info(colored(mess, "magenta"))

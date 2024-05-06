@@ -6,6 +6,7 @@ from typing import Union, Callable
 
 from beartype import beartype
 from einops import rearrange
+from termcolor import colored
 from omegaconf import OmegaConf, DictConfig
 import wandb
 from wandb.errors import CommError
@@ -17,7 +18,7 @@ from gymnasium.experimental.vector.async_vector_env import AsyncVectorEnv
 from gymnasium.experimental.vector.sync_vector_env import SyncVectorEnv
 
 from helpers import logger
-from helpers.misc_util import timed, log_iter_info
+from helpers.misc_util import timed, log_iter_info, prettify_numb
 from helpers.opencv_util import record_video
 from agents.spp_agent import SPPAgent
 
@@ -373,11 +374,19 @@ def learn(cfg: DictConfig,
         with timed("interacting"):
             next(roll_gen)  # no need to get the returned segment, stored in buffer
             agent.timesteps_so_far += cfg.segment_len
+            logger.info(f"so far {prettify_numb(agent.timesteps_so_far)} steps made in env")
 
         with timed("training"):
-            for _ in range(cfg.training_steps_per_iter):
 
-                for _ in range(cfg.g_steps):
+            tts = time.time()
+            ttl = []
+            gtl = []
+            dtl = []
+            gs, ds = 0, 0
+            for _ in range(tot := cfg.training_steps_per_iter):
+
+                gts = time.time()
+                for _ in range(gs := cfg.g_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # determine if updating the actr
@@ -388,12 +397,30 @@ def learn(cfg: DictConfig,
                         batch=batch,
                         update_actr=update_actr,
                     )  # counters for actr and crit updates are incremented internally!
+                    gtl.append(time.time() - gts)
+                    gts = time.time()
 
-                for _ in range(cfg.d_steps):
+                dts = time.time()
+                for _ in range(ds := cfg.d_steps):
                     # sample a batch of transitions from the replay buffer
                     batch = agent.sample_batch()
                     # update the discriminator
                     agent.update_disc(batch)  # update counter incremented internally too
+                    dtl.append(time.time() - dts)
+                    dts = time.time()
+
+                ttl.append(time.time() - tts)
+                tts = time.time()
+
+            logger.info(colored(
+                f"avg tt over {tot}steps: {np.mean(ttl)}secs",
+                "green", attrs=["reverse"]))
+            logger.info(colored(
+                f"avg gt over {tot}steps X {gs} g-steps: {np.mean(gtl)}secs",
+                "green"))
+            logger.info(colored(
+                f"avg dt over {tot}steps X {ds} d-steps: {np.mean(dtl)}secs",
+                "green"))
 
         i += 1
 
@@ -434,6 +461,7 @@ def learn(cfg: DictConfig,
                     step_metric=agent.timesteps_so_far,
                     glob="eval",
                 )
+        logger.info()
 
     # save once we are done
     agent.save_to_path(ckpt_dir, xtra="done")
