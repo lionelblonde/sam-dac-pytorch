@@ -232,17 +232,6 @@ class SPPAgent(object):
         return ac
 
     @beartype
-    def remove_absorbing(self, x: torch.Tensor) -> tuple[torch.Tensor, list[int]]:
-        non_absorbing_rows = []
-        for j, row in enumerate([x[i, :] for i in range(x.size(0))]):
-            if torch.all(torch.eq(row, torch.cat([torch.zeros_like(row[0:-1]),
-                                                  torch.Tensor([1.]).to(self.device)], dim=-1))):
-                logger.info(f"removing absorbing row (#{j})")
-            else:
-                non_absorbing_rows.append(j)
-        return x[non_absorbing_rows, :], non_absorbing_rows
-
-    @beartype
     def compute_losses(self,
                        state: torch.Tensor,
                        action: torch.Tensor,
