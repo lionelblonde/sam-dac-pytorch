@@ -116,9 +116,9 @@ def make_farama_mujoco_env(
     net_shapes.update({"ob_shape": ob_shape, "ac_shape": ac_shape})
 
     # for the replay buffer
+    ob_dim = ob_dim_orig = ob_shape[-1]
+    ac_dim = ac_dim_orig = ac_shape[-1]  # for both: num dims
     if wrap_absorb:
-        ob_dim = ob_dim_orig = ob_shape[-1]
-        ac_dim = ac_dim_orig = ac_shape[-1]  # for both: num dims
         ob_dim += 1
         ac_dim += 1
         erb_shapes.update({
@@ -133,9 +133,9 @@ def make_farama_mujoco_env(
         })
     else:
         erb_shapes.update({
-            "obs0": ob_shape,
-            "obs1": ob_shape,
-            "acs": ac_shape,
+            "obs0": (ob_dim,),
+            "obs1": (ob_dim,),
+            "acs": (ac_dim,),
             "rews": (1,),
             "dones1": (1,),
         })
