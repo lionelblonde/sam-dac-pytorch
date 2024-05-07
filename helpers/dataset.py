@@ -7,7 +7,6 @@ from beartype import beartype
 from einops import rearrange, pack
 import numpy as np
 from numpy.random import Generator
-from torch.utils.data import Dataset
 
 from helpers import logger
 
@@ -34,22 +33,7 @@ def load_dict_h5py(fname: Union[str, Path]) -> dict[str, np.ndarray]:
     return data
 
 
-class DictDataset(Dataset):
-
-    @beartype
-    def __init__(self, data: dict[str, np.ndarray]):
-        self.data = data
-
-    @beartype
-    def __getitem__(self, i: int) -> dict[str, np.ndarray]:
-        return {k: v[i, ...].astype(np.float32) for k, v in self.data.items()}
-
-    @beartype
-    def __len__(self) -> int:
-        return len(next(iter(self.data.values())))
-
-
-class DemoDataset(DictDataset):
+class DemoDataset(object):
 
     @beartype
     def __init__(self,
@@ -201,3 +185,7 @@ class DemoDataset(DictDataset):
     @beartype
     def __repr__(self) -> str:
         return f"DemoDataset(num_demos={self.num_demos})"
+
+    @beartype
+    def __len__(self) -> int:
+        return len(next(iter(self.data.values())))
