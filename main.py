@@ -153,7 +153,6 @@ class MagicRunner(object):
         # seed
         torch.manual_seed(self._cfg.seed)
         torch.cuda.manual_seed_all(self._cfg.seed)
-        np_rng = np.random.default_rng(self._cfg.seed)
 
         # env
         env, net_shapes, erb_shapes, max_ac, max_episode_steps = make_env(
@@ -168,7 +167,7 @@ class MagicRunner(object):
         # create an agent wrapper
 
         expert_dataset = DemoDataset(
-            np_rng=np_rng,
+            np_rng=np.random.default_rng(self._cfg.seed),
             expert_path=self._cfg.expert_path,
             num_demos=self._cfg.num_demos,
             max_ep_steps=max_episode_steps,
@@ -177,7 +176,7 @@ class MagicRunner(object):
         logger.info(f"dd#0 [{expert_dataset}] is set")
 
         replay_buffers = [ReplayBuffer(
-            np_rng=np_rng,
+            np_rng=np.random.default_rng(self._cfg.seed),
             capacity=self._cfg.mem_size,
             erb_shapes=erb_shapes,
         ) for _ in range(self._cfg.num_env)]
