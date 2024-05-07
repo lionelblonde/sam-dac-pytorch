@@ -174,7 +174,7 @@ class MagicRunner(object):
             max_ep_steps=max_episode_steps,
             wrap_absorb=self._cfg.wrap_absorb,
         )
-        logger.info(f"[{expert_dataset}] is set")
+        logger.info(f"dd#0 [{expert_dataset}] is set")
 
         replay_buffers = [ReplayBuffer(
             np_rng=np_rng,
