@@ -57,7 +57,8 @@ class ReplayBuffer(object):
                  erb_shapes: dict[str, tuple[Any, ...]]):
         self.np_rng = np_rng
         self.capacity = capacity
-        self.ring_buffers = {k: RingBuffer(self.capacity, s) for k, s in erb_shapes.items()}
+        self.erb_shapes = erb_shapes
+        self.ring_buffers = {k: RingBuffer(self.capacity, s) for k, s in self.erb_shapes.items()}
 
     @beartype
     def get_trns(self, idxs: np.ndarray) -> dict[str, np.ndarray]:
@@ -135,17 +136,18 @@ class ReplayBuffer(object):
         return trns
 
     @beartype
-    def append(self, transition: dict[str, np.ndarray]):
+    def append(self, trn: dict[str, np.ndarray]):
         """Add a transition to the replay buffer"""
-        assert self.ring_buffers.keys() == transition.keys(), "keys must coincide"
+        assert self.ring_buffers.keys() == trn.keys(), "keys must coincide"
         for k in self.ring_buffers:
-            if not isinstance(transition[k], np.ndarray):
+            if not isinstance(trn[k], np.ndarray):
                 raise TypeError(k)
-            self.ring_buffers[k].append(v=transition[k])
+            self.ring_buffers[k].append(v=trn[k])
 
     @beartype
     def __repr__(self) -> str:
-        return f"ReplayBuffer(capacity={self.capacity})"
+        shapes = "|".join([f"[{k}:{s}]" for k, s in self.erb_shapes.items()])
+        return f"ReplayBuffer(capacity={self.capacity}, shapes={shapes})"
 
     @beartype
     @property
