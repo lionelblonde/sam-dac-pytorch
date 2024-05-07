@@ -534,7 +534,7 @@ class SPPAgent(object):
 
         # apply label smoothing to real labels (one-sided label smoothing)
         if (offset := self.hps.d_label_smooth) != 0:
-            real_labels.uniform_(1. - offset, 1. + offset)  # TODO(lionel): fix this
+            real_labels.uniform_(1. - offset, 1. + offset)
             logger.info("applied one-sided label smoothing")
 
         # binary classification
