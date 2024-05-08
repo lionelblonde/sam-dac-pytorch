@@ -1,5 +1,5 @@
 # resources
-cuda: false
+cuda: true
 fp16: false
 mps: false
 

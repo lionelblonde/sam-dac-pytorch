@@ -5,7 +5,7 @@ mps: false
 
 # env
 vecenv: true
-numenv: 8
+numenv: 4
 
 # logging
 wandb_project: "damnlemons"
@@ -35,7 +35,7 @@ mem_size: 100000
 polyak: 0.005
 targ_up_freq: 100
 n_step_returns: true
-lookahead: 10
+lookahead: 5
 ret_norm: false
 
 # TD3
