@@ -12,7 +12,7 @@ class RunningMoments(object):
         """Maintain running statistics across workers leveraging Chan's method"""
         self.count: float = 1e-4  # haxx to avoid any division by zero
         # initialize mean and var with float64 precision (objectively more accurate)
-        dim = shape[-1]  # TODO(lione): best we can do?
+        dim = shape[-1]  # TODO(lionel): best we can do?
         self.mean = torch.zeros((dim,), dtype=torch.float32, device=device)
         self.std = torch.ones((dim,), dtype=torch.float32, device=device)
         self.device = device
