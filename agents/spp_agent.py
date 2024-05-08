@@ -185,14 +185,14 @@ class SPPAgent(object):
         return x
 
     @beartype
-    def sample_batch(self) -> dict[str, np.ndarray]:
+    def sample_batch(self) -> dict[str, torch.Tensor]:
         """Sample a batch of transitions from the replay buffer"""
         assert self.replay_buffers is not None
 
         # create patcher if needed
         @beartype
-        def _patcher(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-            return self.get_syn_rew(x, y, z).numpy(force=True)
+        def _patcher(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+            return self.get_syn_rew(x, y, z)
 
         patcher = _patcher if self.hps.historical_patching else None
 
@@ -398,23 +398,20 @@ class SPPAgent(object):
         logger.info(f"logged this to wandb: {wandb_dict}")
 
     @beartype
-    def update_actr_crit(self, batch: dict[str, np.ndarray], *, update_actr: bool):
+    def update_actr_crit(self, batch: dict[str, torch.Tensor], *, update_actr: bool):
         """Update the critic and the actor"""
         # transfer to device
         if self.hps.wrap_absorb:
-            state = torch.Tensor(batch["obs0_orig"]).to(self.device)
-            action = torch.Tensor(batch["acs_orig"]).to(self.device)
-            next_state = torch.Tensor(batch["obs1_orig"]).to(self.device)
+            state = batch["obs0_orig"]
+            action = batch["acs_orig"]
+            next_state = batch["obs1_orig"]
         else:
-            state = torch.Tensor(batch["obs0"]).to(self.device)
-            action = torch.Tensor(batch["acs"]).to(self.device)
-            next_state = torch.Tensor(batch["obs1"]).to(self.device)
-        reward = torch.Tensor(batch["rews"]).to(self.device)
-        done = torch.Tensor(batch["dones1"].astype("float32")).to(self.device)
-        if self.hps.n_step_returns:
-            td_len = torch.Tensor(batch["td_len"]).to(self.device)
-        else:
-            td_len = torch.ones_like(done).to(self.device)
+            state = batch["obs0"]
+            action = batch["acs"]
+            next_state = batch["obs1"]
+        reward = batch["rews"]
+        done = batch["dones1"].float()
+        td_len = batch["td_len"] if self.hps.n_step_returns else torch.ones_like(done)
 
         # compute target action
         if self.hps.targ_actor_smoothing:
@@ -475,7 +472,7 @@ class SPPAgent(object):
         self.update_target_net()
 
     @beartype
-    def update_disc(self, batch: dict[str, np.ndarray]):
+    def update_disc(self, batch: dict[str, torch.Tensor]):
 
         assert self.expert_dataset is not None
 
@@ -490,7 +487,7 @@ class SPPAgent(object):
             d_keys.append("acs")
 
         # filter out unwanted keys and tensor-ify
-        p_batch = {k: torch.Tensor(batch[k]) for k in d_keys}
+        p_batch = {k: batch[k] for k in d_keys}
 
         # get a batch of samples from the expert dataset
         e_batches = defaultdict(list)
@@ -624,19 +621,13 @@ class SPPAgent(object):
 
     @beartype
     def get_syn_rew(self,
-                    state: np.ndarray,
-                    action: np.ndarray,
-                    next_state: np.ndarray) -> torch.Tensor:
-
+                    state: torch.Tensor,
+                    action: torch.Tensor,
+                    next_state: torch.Tensor) -> torch.Tensor:
+        # beartype should hangle the type asserts
         # define the discriminator inputs
         input_a = state
         input_b = next_state if self.hps.state_only else action
-        # turn into torch tensors
-        input_a = torch.Tensor(input_a)
-        input_b = torch.Tensor(input_b)
-        # transfer to device in use
-        input_a = input_a.to(self.device)
-        input_b = input_b.to(self.device)
 
         # compure score
         score = self.disc(input_a, input_b).detach()

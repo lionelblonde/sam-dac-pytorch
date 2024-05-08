@@ -176,9 +176,10 @@ class MagicRunner(object):
         logger.info(f"dd#0 [{expert_dataset}] is set")
 
         replay_buffers = [ReplayBuffer(
-            np_rng=np.random.default_rng(self._cfg.seed),
+            generator=torch.Generator(device).manual_seed(self._cfg.seed),
             capacity=self._cfg.mem_size,
             erb_shapes=erb_shapes,
+            device=device,
         ) for _ in range(self._cfg.num_env)]
         for i, rb in enumerate(replay_buffers):
             logger.info(f"rb#{i} [{rb}] is set")

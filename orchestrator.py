@@ -77,13 +77,8 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         assert outss is not None
         for i, outs in enumerate(outss):
             for out in outs:
-                # add synthetic rewards to each transition
-                out.update({"rews": agent.get_syn_rew(
-                    *(rearrange(x, "d -> 1 d") for x in [out["obs0"], out["acs"], out["obs1"]]),
-                ).numpy(force=True)})
-
                 # add transition to the i-th replay buffer
-                agent.replay_buffers[i].append(out)
+                agent.replay_buffers[i].append(out, rew_func=agent.get_syn_rew)
 
                 # update the observation normalizer
                 out_obs0 = deepcopy(out["obs0"])
