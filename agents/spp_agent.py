@@ -11,7 +11,6 @@ import torch
 from torch.nn.utils import clip_grad as cg
 
 import torch.nn.functional as ff
-from torch.utils.data import DataLoader
 from torch import autograd
 
 from helpers import logger
@@ -148,15 +147,6 @@ class SPPAgent(object):
         logger.info(f"{t_max = }")
 
         if self.expert_dataset is not None:
-            # set up demonstrations dataloader
-            self.e_batch_size = min(len(self.expert_dataset), self.hps.batch_size)
-            self.e_dataloader = DataLoader(
-                self.expert_dataset,
-                self.e_batch_size,
-                shuffle=True,
-                drop_last=True,
-            )
-            assert len(self.e_dataloader) > 0
             # create discriminator and its optimizer
             disc_net_args = [self.ob_shape, self.ac_shape, self.rms_obs]  # for flexibility
             disc_net_kwargs_keys = ["wrap_absorb", "d_batch_norm", "spectral_norm", "state_only"]
@@ -214,19 +204,19 @@ class SPPAgent(object):
         return out
 
     @beartype
-    def predict(self, ob, *, apply_noise: bool) -> np.ndarray:
+    def predict(self, ob: np.ndarray, *, apply_noise: bool) -> np.ndarray:
         """Predict an action, with or without perturbation"""
         # create tensor from the state (`require_grad=False` by default)
-        ob = torch.Tensor(ob).to(self.device)
+        ob_tensor = torch.Tensor(ob).to(self.device)
         # predict an action
-        ac = self.actr(ob)
+        ac_tensor = self.actr(ob_tensor)
         # if desired, add noise to the predicted action
         if apply_noise:
             # apply additive action noise once the action has been predicted,
             # in combination with parameter noise, or not.
-            ac += self.ac_noise.generate()
+            ac_tensor += self.ac_noise.generate()
         # place on cpu as a numpy array
-        ac = ac.numpy(force=True)
+        ac = ac_tensor.numpy(force=True)
         # clip the action to fit within the range from the environment
         ac.clip(-self.max_ac, self.max_ac)
         return ac
@@ -498,20 +488,16 @@ class SPPAgent(object):
         e_batch = {}
         for k, v in e_batches.items():
             e_batch[k], _ = pack(v, "* d")  # equiv to: rearrange(v, "n b d -> (n b) d")
-            e_batch[k] = torch.Tensor(e_batch[k])
 
         # transfer to device
-        p_input_a = p_batch["obs0"].to(self.device)
-        e_input_a = e_batch["obs0"].to(self.device)
+        p_input_a = p_batch["obs0"]
+        e_input_a = e_batch["obs0"]
         if self.hps.state_only:
-            if self.hps.n_step_returns:
-                p_input_b = p_batch["obs1_td1"].to(self.device)
-            else:
-                p_input_b = p_batch["obs1"].to(self.device)
-            e_input_b = e_batch["obs1"].to(self.device)
+            p_input_b = p_batch["obs1_td1"] if self.hps.n_step_returns else p_batch["obs1"]
+            e_input_b = e_batch["obs1"]
         else:
-            p_input_b = p_batch["acs"].to(self.device)
-            e_input_b = e_batch["acs"].to(self.device)
+            p_input_b = p_batch["acs"]
+            e_input_b = e_batch["acs"]
 
         # compute scores
         p_scores = self.disc(p_input_a, p_input_b)
@@ -526,8 +512,8 @@ class SPPAgent(object):
         entropy_loss = -self.hps.ent_reg_scale * entropy
 
         # create labels
-        fake_labels = 0. * torch.ones_like(p_scores).to(self.device)
-        real_labels = 1. * torch.ones_like(e_scores).to(self.device)
+        fake_labels = 0. * torch.ones_like(p_scores)
+        real_labels = 1. * torch.ones_like(e_scores)
 
         # apply label smoothing to real labels (one-sided label smoothing)
         if (offset := self.hps.d_label_smooth) != 0:

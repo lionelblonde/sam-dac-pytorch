@@ -167,7 +167,9 @@ class MagicRunner(object):
         # create an agent wrapper
 
         expert_dataset = DemoDataset(
+            generator=torch.Generator(device).manual_seed(self._cfg.seed),
             np_rng=np.random.default_rng(self._cfg.seed),
+            device=device,
             expert_path=self._cfg.expert_path,
             num_demos=self._cfg.num_demos,
             max_ep_steps=max_episode_steps,
