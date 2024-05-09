@@ -140,13 +140,8 @@ class MagicRunner(object):
             torch.backends.cudnn.deterministic = True
             device = torch.device("cuda:0")
         else:
-            if self._cfg.mps:
-                assert torch.mps
-                # use Apple's Metal Performance Shaders (MPS)
-                device = torch.device("mps:0")
-            else:
-                # default case: just use plain old cpu, no cuda or m-chip gpu
-                device = torch.device("cpu")
+            # default case: just use plain old cpu, no cuda or m-chip gpu
+            device = torch.device("cpu")
             os.environ["CUDA_VISIBLE_DEVICES"] = ""  # kill any possibility of usage
         logger.info(f"device in use: {device}")
 
