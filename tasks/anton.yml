@@ -46,6 +46,13 @@ td3_std: 0.2
 td3_c: 0.5
 actor_update_delay: 2
 
+# SAC
+state_dependent_std: true
+use_adaptive_alpha: true
+log_alpha_lr: 3.0e-4
+init_temp_log_alpha: 0.1
+crit_targ_update_freq: 1
+
 # distributional RL
 use_c51: false
 use_qr: false
