@@ -1,7 +1,6 @@
 # resources
 cuda: false
 fp16: false
-mps: false
 
 # env
 vecenv: true
