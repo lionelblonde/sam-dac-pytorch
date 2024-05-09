@@ -46,6 +46,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
     while True:
 
         # predict action
+        assert isinstance(ob, np.ndarray)
         ac = agent.predict(ob, apply_noise=True)
         # nan-proof and clip
         ac = np.nan_to_num(ac)
