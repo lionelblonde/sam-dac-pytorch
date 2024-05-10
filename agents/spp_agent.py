@@ -21,6 +21,8 @@ from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.ac_noise import NormalActionNoise
 from agents.memory import ReplayBuffer
 
+from helpers.misc_util import timed
+
 
 class SPPAgent(object):
 
@@ -42,6 +44,8 @@ class SPPAgent(object):
 
         assert isinstance(hps, DictConfig)
         self.hps = hps
+
+        self.eye = torch.eye(self.hps.batch_size * self.hps.num_env).unsqueeze(-1).to(self.device)
 
         self.timesteps_so_far = 0
         self.actr_updates_so_far = 0
@@ -578,20 +582,40 @@ class SPPAgent(object):
         score = self.disc(input_a_i, input_b_i)
 
         # get the gradient of this operation w.r.t. its inputs
-        grads = autograd.grad(
-            outputs=score,
-            inputs=(inputs := [input_a_i, input_b_i]),
-            only_inputs=True,
-            grad_outputs=[torch.ones_like(score)],
-            retain_graph=True,
-            create_graph=True,
-            allow_unused=False,
-        )
-        assert len(list(grads)) == len(inputs), "length must be exactly 2"
+
+        # with timed("trad"):
+        #     grad_outputs = torch.ones_like(score)
+        #     grads_trad = autograd.grad(
+        #         inputs=[input_a_i, input_b_i],
+        #         outputs=score,
+        #         grad_outputs=grad_outputs,
+        #         retain_graph=True,
+        #         create_graph=True,
+        #     )
+        #
+        # packed_grads, _ = pack(list(grads_trad), "b *")
+        # grads_norm = packed_grads.norm(2, dim=-1)
+
+        with timed("vmap"):
+            # doc: https://pytorch.org/docs/stable/generated/torch.vmap.html
+            v_grads = torch.vmap(
+                func=(
+                    lambda go: autograd.grad(
+                        inputs=[input_a_i, input_b_i],
+                        outputs=score,
+                        grad_outputs=go,
+                        retain_graph=True,
+                        create_graph=True,
+                    )
+                ),
+            )
+            grads = v_grads(self.eye)
 
         # return the gradient penalty
         packed_grads, _ = pack(list(grads), "b *")
         grads_norm = packed_grads.norm(2, dim=-1)
+
+        # assert torch.allclose(grads_norm, grads_norm_trad)
 
         if self.hps.one_sided_pen:
             # penalize the gradient for having a norm GREATER than k
