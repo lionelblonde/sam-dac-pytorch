@@ -81,14 +81,6 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
                 # add transition to the i-th replay buffer
                 agent.replay_buffers[i].append(out, rew_func=agent.get_syn_rew)
 
-                # update the observation normalizer
-                out_obs0 = deepcopy(out["obs0"])
-                if wrap_absorb:
-                    if np.all(np.equal(out_obs0, np.append(np.zeros_like(out_obs0[0:-1]), 1.))):
-                        # if this is a "flag" state (wrap absorbing): not used to update rms_obs
-                        pass
-                    else:
-                        agent.rms_obs.update(out_obs0[0:-1])
         # set current state with the next
         ob = deepcopy(new_ob)
 
