@@ -390,18 +390,23 @@ class SPPAgent(object):
     @beartype
     def update_actr_crit(self, batch: dict[str, torch.Tensor], *, update_actr: bool):
         """Update the critic and the actor"""
-        # transfer to device
-        if self.hps.wrap_absorb:
-            state = batch["obs0_orig"]
-            action = batch["acs_orig"]
-            next_state = batch["obs1_orig"]
-        else:
-            state = batch["obs0"]
-            action = batch["acs"]
-            next_state = batch["obs1"]
-        reward = batch["rews"]
-        done = batch["dones1"].float()
-        td_len = batch["td_len"] if self.hps.n_step_returns else torch.ones_like(done)
+
+        with torch.no_grad():
+            # define inputs
+            if self.hps.wrap_absorb:
+                state = batch["obs0_orig"]
+                action = batch["acs_orig"]
+                next_state = batch["obs1_orig"]
+            else:
+                state = batch["obs0"]
+                action = batch["acs"]
+                next_state = batch["obs1"]
+            reward = batch["rews"]
+            done = batch["dones1"].float()
+            td_len = batch["td_len"] if self.hps.n_step_returns else torch.ones_like(done)
+
+        # update the observation normalizer
+        self.rms_obs.update(state)
 
         # compute target action
         if self.hps.targ_actor_smoothing:
@@ -476,28 +481,30 @@ class SPPAgent(object):
         else:
             d_keys.append("acs")
 
-        # filter out unwanted keys and tensor-ify
-        p_batch = {k: batch[k] for k in d_keys}
+        with torch.no_grad():
 
-        # get a batch of samples from the expert dataset
-        e_batches = defaultdict(list)
-        for _ in range(self.hps.num_env):
-            e_batch = self.expert_dataset.sample(self.hps.batch_size, keys=d_keys)
-            for k, v in e_batch.items():
-                e_batches[k].append(v)
-        e_batch = {}
-        for k, v in e_batches.items():
-            e_batch[k], _ = pack(v, "* d")  # equiv to: rearrange(v, "n b d -> (n b) d")
+            # filter out unwanted keys and tensor-ify
+            p_batch = {k: batch[k] for k in d_keys}
 
-        # transfer to device
-        p_input_a = p_batch["obs0"]
-        e_input_a = e_batch["obs0"]
-        if self.hps.state_only:
-            p_input_b = p_batch["obs1_td1"] if self.hps.n_step_returns else p_batch["obs1"]
-            e_input_b = e_batch["obs1"]
-        else:
-            p_input_b = p_batch["acs"]
-            e_input_b = e_batch["acs"]
+            # get a batch of samples from the expert dataset
+            e_batches = defaultdict(list)
+            for _ in range(self.hps.num_env):
+                e_batch = self.expert_dataset.sample(self.hps.batch_size, keys=d_keys)
+                for k, v in e_batch.items():
+                    e_batches[k].append(v)
+            e_batch = {}
+            for k, v in e_batches.items():
+                e_batch[k], _ = pack(v, "* d")  # equiv to: rearrange(v, "n b d -> (n b) d")
+
+            # define inputs
+            p_input_a = p_batch["obs0"]
+            e_input_a = e_batch["obs0"]
+            if self.hps.state_only:
+                p_input_b = p_batch["obs1_td1"] if self.hps.n_step_returns else p_batch["obs1"]
+                e_input_b = e_batch["obs1"]
+            else:
+                p_input_b = p_batch["acs"]
+                e_input_b = e_batch["acs"]
 
         # compute scores
         p_scores = self.disc(p_input_a, p_input_b)
