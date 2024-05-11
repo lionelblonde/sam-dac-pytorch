@@ -1,7 +1,6 @@
-from typing import Union, Any
+from typing import Any
 
 from beartype import beartype
-import numpy as np
 import torch
 
 
@@ -18,12 +17,9 @@ class RunningMoments(object):
         self.device = device
 
     @beartype
-    def update(self, x: Union[torch.Tensor, np.ndarray]):
+    def update(self, x: torch.Tensor):
         """Update running statistics using the new batch's statistics"""
-        if isinstance(x, torch.Tensor):
-            assert x.device == self.device, "must: same device"
-        elif isinstance(x, np.ndarray):
-            x = torch.Tensor(x).to(self.device)
+        assert x.device == self.device, "must: same device"
         self.update_moments(x.mean(dim=0), x.std(dim=0), x.size(0))
 
     @beartype
