@@ -25,6 +25,7 @@ from agents.memory import ReplayBuffer
 class SPPAgent(object):
 
     MAGIC_FACTOR: float = 0.1
+    TRAIN_METRICS_WANDB_LOG_FREQ: int = 5000
 
     @beartype
     def __init__(self,
@@ -372,9 +373,6 @@ class SPPAgent(object):
                      glob: str):
         """Send the metrics to the wandb dashboard"""
 
-        if glob != "eval" and step_metric % 100 != 0:
-            return
-
         wandb_dict = {}
         for k, v in metrics.items():
             if isinstance(v, np.ndarray):
@@ -435,12 +433,13 @@ class SPPAgent(object):
 
             self.actr_updates_so_far += 1
 
-            self.send_to_dash(
-                {"actr_loss": actr_loss.numpy(force=True),
-                 "actr_lr": np.array(self.actr_sched.get_last_lr()[0]).astype(np.float64)},
-                step_metric=self.actr_updates_so_far,
-                glob="train_actr",
-            )
+            if self.actr_updates_so_far % self.TRAIN_METRICS_WANDB_LOG_FREQ == 0:
+                self.send_to_dash(
+                    {"actr_loss": actr_loss.numpy(force=True),
+                     "actr_lr": np.array(self.actr_sched.get_last_lr()[0]).astype(np.float64)},
+                    step_metric=self.actr_updates_so_far,
+                    glob="train_actr",
+                )
 
         # update critic
         self.crit_opt.zero_grad()
@@ -454,14 +453,15 @@ class SPPAgent(object):
 
         self.crit_updates_so_far += 1
 
-        wandb_dict = {"crit_loss": crit_loss.numpy(force=True)}
-        if twin_loss is not None:
-            wandb_dict.update({"twin_loss": twin_loss.numpy(force=True)})
-        self.send_to_dash(
-            wandb_dict,
-            step_metric=self.crit_updates_so_far,
-            glob="train_crit",
-        )
+        if self.crit_updates_so_far % self.TRAIN_METRICS_WANDB_LOG_FREQ == 0:
+            wandb_dict = {"crit_loss": crit_loss.numpy(force=True)}
+            if twin_loss is not None:
+                wandb_dict.update({"twin_loss": twin_loss.numpy(force=True)})
+            self.send_to_dash(
+                wandb_dict,
+                step_metric=self.crit_updates_so_far,
+                glob="train_crit",
+            )
 
         # update target nets
         self.update_target_net()
@@ -554,16 +554,16 @@ class SPPAgent(object):
 
         self.disc_updates_so_far += 1  # count this as one update
 
-        metrics = {}
-        # populate metrics with the latest values
-        metrics["entropy_loss"] = entropy_loss.numpy(force=True)
-        metrics["p_loss"] = p_loss.numpy(force=True)
-        metrics["e_loss"] = e_loss.numpy(force=True)
-        metrics["p_e_loss"] = p_e_loss.numpy(force=True)
-        if self.hps.grad_pen and grad_pen is not None:
-            metrics["grad_pen"] = grad_pen.numpy(force=True)
-        self.send_to_dash(metrics, step_metric=self.disc_updates_so_far, glob="train_disc")
-        del metrics
+        if self.disc_updates_so_far % self.TRAIN_METRICS_WANDB_LOG_FREQ == 0:
+            wandb_dict = {
+                "entropy_loss": entropy_loss.numpy(force=True),
+                "p_loss": p_loss.numpy(force=True),
+                "e_loss": e_loss.numpy(force=True),
+                "p_e_loss": p_e_loss.numpy(force=True),
+            }
+            if self.hps.grad_pen and grad_pen is not None:
+                wandb_dict.update({"grad_pen": grad_pen.numpy(force=True)})
+            self.send_to_dash(wandb_dict, step_metric=self.disc_updates_so_far, glob="train_disc")
 
     @beartype
     def grad_pen(self,
