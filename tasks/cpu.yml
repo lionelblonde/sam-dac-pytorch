@@ -77,5 +77,3 @@ one_sided_pen: true
 historical_patching: true
 wrap_absorb: true
 d_batch_norm: false
-use_vmap_for_gp: true
-vmap_sanity_check: true
