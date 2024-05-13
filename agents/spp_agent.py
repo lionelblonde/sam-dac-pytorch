@@ -17,6 +17,7 @@ from helpers import logger
 from helpers.normalizer import RunningMoments
 from helpers.dataset import DemoDataset
 from helpers.math_util import huber_quant_reg_loss
+from helpers.misc_util import timed
 from agents.nets import log_module_info, Actor, Critic, Discriminator
 from agents.ac_noise import NormalActionNoise
 from agents.memory import ReplayBuffer
@@ -26,6 +27,7 @@ class SPPAgent(object):
 
     MAGIC_FACTOR: float = 0.1
     TRAIN_METRICS_WANDB_LOG_FREQ: int = 100
+    VMAP_SANITY_THRES: int = 10
 
     @beartype
     def __init__(self,
@@ -43,6 +45,14 @@ class SPPAgent(object):
 
         assert isinstance(hps, DictConfig)
         self.hps = hps
+
+        # the two following are defined even if they are not necessarily both used
+        # this is done to avoid complex if-then-else clauses (as the ones in grad pen)
+        # the memory overhead is minimal and those are only computed once
+        self.vmap_go = rearrange(torch.eye(
+            self.hps.batch_size * self.hps.num_env), "b c -> b c 1").to(self.device)
+        self.sequ_go = rearrange(torch.ones(
+            self.hps.batch_size * self.hps.num_env), "b -> b 1").to(self.device)
 
         self.timesteps_so_far = 0
         self.actr_updates_so_far = 0
@@ -585,19 +595,54 @@ class SPPAgent(object):
         score = self.disc(input_a_i, input_b_i)
 
         # get the gradient of this operation w.r.t. its inputs
+        # either it is computed with a vmap or it is done sequentially (default)
+        # if the option to conduct a sanity check is ON, then both are calculated
+        # and we then quit after a few iterations (not to be caught with an outlier first iter)
+        vmap_grads_norm = None
+        sequ_grads_norm = None
 
-        grad_outputs = torch.ones_like(score)
-        grads_trad = autograd.grad(
-            inputs=[input_a_i, input_b_i],
-            outputs=score,
-            grad_outputs=grad_outputs,
-            retain_graph=True,
-            create_graph=True,
-        )
+        if not self.hps.use_vmap_for_gp or self.hps.vmap_sanity_check:
+            # use default autograd way
+            with timed("sequ gp"):
+                sequ_grads = autograd.grad(
+                    inputs=[input_a_i, input_b_i],
+                    outputs=score,
+                    grad_outputs=self.sequ_go,
+                    retain_graph=True,
+                    create_graph=True,
+                )
 
-        packed_grads, _ = pack(list(grads_trad), "b *")
-        grads_norm = packed_grads.norm(2, dim=-1)
+                packed_sequ_grads, _ = pack(list(sequ_grads), "b *")
+                sequ_grads_norm = packed_sequ_grads.norm(2, dim=-1)
 
+        if self.hps.use_vmap_for_gp or self.hps.vmap_sanity_check:
+            # use vmap
+            # doc: https://pytorch.org/docs/stable/generated/torch.vmap.html
+            with timed("vmap gp"):
+                v_grad_func = torch.vmap(
+                    func=(
+                        lambda go: torch.cat(autograd.grad(
+                            inputs=[input_a_i, input_b_i],
+                            outputs=score,
+                            grad_outputs=go,
+                            retain_graph=True,
+                            create_graph=True,
+                        ), dim=-1).norm(2, dim=-1)
+                    ),
+                )
+                vmap_grads = v_grad_func(self.vmap_go)
+
+                packed_vmap_grads, _ = pack(list(vmap_grads), "b *")
+                vmap_grads_norm = packed_vmap_grads.norm(2, dim=-1)
+
+        if self.hps.vmap_sanity_check and self.disc_updates_so_far >= self.VMAP_SANITY_THRES:
+            assert vmap_grads_norm is not None and sequ_grads_norm is not None
+            # check that vmap returned the same result as the sequential approach
+            assert torch.allclose(sequ_grads_norm, vmap_grads_norm)
+            raise SystemExit("sanity check passed! bye")
+
+        grads_norm = vmap_grads_norm if self.hps.use_vmap_for_gp else sequ_grads_norm
+        assert grads_norm is not None  # quiets down the type-checker
         if self.hps.one_sided_pen:
             # penalize the gradient for having a norm GREATER than k
             grad_pen = torch.max(
