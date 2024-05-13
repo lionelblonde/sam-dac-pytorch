@@ -86,7 +86,7 @@ class ReplayBuffer(object):
         mats, _ = pack(mats, "* h w")
         out = rearrange(torch.sum(reps * torch.sum(mats, dim=0), dim=1), "k -> k 1")
         assert out.size() == x.size()
-        return out[0]
+        return out[0]  # would be simpler to just compute the 1st elt, but only used in n-step rets
 
     @beartype
     def sample(self,
@@ -134,8 +134,12 @@ class ReplayBuffer(object):
 
                 # the following are all ints
                 term_idx = 1.0
+
                 ep_end_idx = int(
                     idx + torch.argmax(dones.float()).item() if term_idx in dones else la_end_idx)
+                # doc: if there are multiple maximal values in a reduced row
+                # then the indices of the first maximal value are returned.
+
                 la_is_trimmed = 0 if ep_end_idx == la_end_idx else 1
                 # compute lookahead length
                 td_len = ep_end_idx - idx + 1
