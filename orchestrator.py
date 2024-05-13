@@ -405,7 +405,7 @@ def learn(cfg: DictConfig,
             tts = time.time()
 
         logger.info(colored(
-            f"avg tt over {tot}steps: {np.mean(ttl)}secs",
+            f"avg tt over {tot}steps: {(avg_tt_per_iter := np.mean(ttl))}secs",  # logged in eval
             "green", attrs=["reverse"]))
         logger.info(colored(
             f"avg gt over {tot}steps X {gs} g-steps: {np.mean(gtl)}secs",
@@ -451,8 +451,12 @@ def learn(cfg: DictConfig,
             logger.dump_tabular()
 
             # log stats in dashboard
+            assert agent.replay_buffers is not None
             agent.send_to_dash(
-                {f"{k}-mean": v.mean() for k, v in eval_metrics.items()},
+                {**{f"{k}-mean": v.mean() for k, v in eval_metrics.items()},
+                 "rbx-num-entries": np.array(agent.replay_buffers[0].num_entries),
+                 # taking the first because this one will always exist whatever the numenv
+                 "avg-tt-per-iter": avg_tt_per_iter},
                 step_metric=agent.timesteps_so_far,
                 glob="eval",
             )
