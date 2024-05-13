@@ -72,6 +72,7 @@ class Discriminator(nn.Module):
     def __init__(self,
                  ob_shape: tuple[int, ...],
                  ac_shape: tuple[int, ...],
+                 hid_size: int,
                  rms_obs: RunningMoments,
                  *,
                  wrap_absorb: bool,
@@ -107,15 +108,15 @@ class Discriminator(nn.Module):
         # assemble the layers and output heads
         self.fc_stack = nn.Sequential(OrderedDict([
             ("fc_block_1", nn.Sequential(OrderedDict([
-                ("fc", apply_sn(nn.Linear(in_dim, 100))),
+                ("fc", apply_sn(nn.Linear(in_dim, hid_size))),
                 ("nl", nn.LeakyReLU(negative_slope=0.1)),
             ]))),
             ("fc_block_2", nn.Sequential(OrderedDict([
-                ("fc", apply_sn(nn.Linear(100, 100))),
+                ("fc", apply_sn(nn.Linear(hid_size, hid_size))),
                 ("nl", nn.LeakyReLU(negative_slope=0.1)),
             ]))),
         ]))
-        self.d_head = nn.Linear(100, 1)
+        self.d_head = nn.Linear(hid_size, 1)
         # perform initialization
         self.fc_stack.apply(init())
         self.d_head.apply(init())

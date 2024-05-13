@@ -153,7 +153,7 @@ class SPPAgent(object):
 
         if self.expert_dataset is not None:
             # create discriminator and its optimizer
-            disc_net_args = [self.ob_shape, self.ac_shape, self.rms_obs]  # for flexibility
+            disc_net_args = [self.ob_shape, self.ac_shape, self.hps.d_hid_size, self.rms_obs]
             disc_net_kwargs_keys = ["wrap_absorb", "d_batch_norm", "spectral_norm", "state_only"]
             disc_net_kwargs = {k: getattr(self.hps, k) for k in disc_net_kwargs_keys}
             self.disc = Discriminator(*disc_net_args, **disc_net_kwargs).to(self.device)
