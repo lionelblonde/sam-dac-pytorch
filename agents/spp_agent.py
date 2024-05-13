@@ -25,7 +25,7 @@ from agents.memory import ReplayBuffer
 class SPPAgent(object):
 
     MAGIC_FACTOR: float = 0.1
-    TRAIN_METRICS_WANDB_LOG_FREQ: int = 5000
+    TRAIN_METRICS_WANDB_LOG_FREQ: int = 100
 
     @beartype
     def __init__(self,
