@@ -11,6 +11,16 @@ As such, adapting the code to support non-addressed environments that follow thi
 automatic at best, and fairly straightforward at worst.
 No extension to other APIs is planned at this time.
 
+## Note on devices
+
+For the proposed YAML configurations, training the actor-critic is faster on GPU than CPU.
+On the other hand, for the discriminator, it is the other way around. It is only for hidden sizes
+beyond ~200 that the training the discriminator is faster on GPU than on CPU. Shallow
+investigations however showed that sizes of ~300 necessitate a revisitation of other
+hyper-parameters in the configuration, which are left for the interested reader to carry out.
+Still, the overall average training time per iteration is lower on GPU for the proposed YAMLs,
+as long as n-step returns is left turned off.
+
 ## Dependencies
 
 ### Python
@@ -22,7 +32,7 @@ the file `install_instruct.txt` located at the root of the project.
 ### Expert Demonstrations
 
 Download the expert demonstrations complementing this repository and make them accessible:
-- Download the expert demonstrations that we have shared at
+- Download the expert demonstrations that I have shared at
 [this link](https://drive.google.com/drive/folders/1dGw-O6ZT_WWTuqDayIA9xat1jZgeiXoE?usp=sharing);
 - Place them at the desired location in your filesystem;
 - Create the environment variable: `export DEMO_DIR=/where/you/downloaded/and/placed/the/demos`.
