@@ -51,7 +51,7 @@ def prettify_time(seconds: int) -> str:
 
 @beartype
 @contextmanager
-def timed(text: str):
+def timed_ctx(text: str):
     pre_mess = f"::{text}::"
     logger.info(colored(pre_mess, "magenta", attrs=["underline", "bold"]))
     tstart = time.time()

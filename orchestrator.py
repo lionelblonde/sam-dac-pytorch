@@ -18,7 +18,7 @@ from gymnasium.experimental.vector.async_vector_env import AsyncVectorEnv
 from gymnasium.experimental.vector.sync_vector_env import SyncVectorEnv
 
 from helpers import logger
-from helpers.misc_util import timed, log_iter_info, prettify_numb
+from helpers.misc_util import log_iter_info, prettify_numb
 from helpers.opencv_util import record_video
 from agents.spp_agent import SPPAgent
 
@@ -359,96 +359,104 @@ def learn(cfg: DictConfig,
         if i % 100 == 0 or DEBUG:
             log_iter_info(i, cfg.num_timesteps // cfg.segment_len, tstart)
 
-        with timed("interacting"):
-            next(roll_gen)  # no need to get the returned segment, stored in buffer
-            agent.timesteps_so_far += cfg.segment_len
-            logger.info(f"so far {prettify_numb(agent.timesteps_so_far)} steps made in env")
+        logger.info(("interact").upper())
+        its = time.time()
+        next(roll_gen)  # no need to get the returned segment, stored in buffer
+        agent.timesteps_so_far += cfg.segment_len
+        logger.info(f"so far {prettify_numb(agent.timesteps_so_far)} steps made")
+        logger.info(colored(
+            f"interaction time: {time.time() - its}secs",
+            "green"))
 
-        with timed("training"):
+        logger.info(("train").upper())
 
-            tts = time.time()
-            ttl = []
-            gtl = []
-            dtl = []
-            gs, ds = 0, 0
-            for _ in range(tot := cfg.training_steps_per_iter):
+        tts = time.time()
+        ttl = []
+        gtl = []
+        dtl = []
+        gs, ds = 0, 0
+        for _ in range(tot := cfg.training_steps_per_iter):
 
+            gts = time.time()
+            for _ in range(gs := cfg.g_steps):
+                # sample a batch of transitions from the replay buffer
+                batch = agent.sample_batch()
+                # determine if updating the actr
+                update_actr = not bool(
+                    agent.crit_updates_so_far % cfg.actor_update_delay)
+                # update the actor and critic
+                agent.update_actr_crit(
+                    batch=batch,
+                    update_actr=update_actr,
+                )  # counters for actr and crit updates are incremented internally!
+                gtl.append(time.time() - gts)
                 gts = time.time()
-                for _ in range(gs := cfg.g_steps):
-                    # sample a batch of transitions from the replay buffer
-                    batch = agent.sample_batch()
-                    # determine if updating the actr
-                    update_actr = not bool(
-                        agent.crit_updates_so_far % cfg.actor_update_delay)
-                    # update the actor and critic
-                    agent.update_actr_crit(
-                        batch=batch,
-                        update_actr=update_actr,
-                    )  # counters for actr and crit updates are incremented internally!
-                    gtl.append(time.time() - gts)
-                    gts = time.time()
 
+            dts = time.time()
+            for _ in range(ds := cfg.d_steps):
+                # sample a batch of transitions from the replay buffer
+                batch = agent.sample_batch()
+                # update the discriminator
+                agent.update_disc(batch)  # update counter incremented internally too
+                dtl.append(time.time() - dts)
                 dts = time.time()
-                for _ in range(ds := cfg.d_steps):
-                    # sample a batch of transitions from the replay buffer
-                    batch = agent.sample_batch()
-                    # update the discriminator
-                    agent.update_disc(batch)  # update counter incremented internally too
-                    dtl.append(time.time() - dts)
-                    dts = time.time()
 
-                ttl.append(time.time() - tts)
-                tts = time.time()
+            ttl.append(time.time() - tts)
+            tts = time.time()
 
-            logger.info(colored(
-                f"avg tt over {tot}steps: {np.mean(ttl)}secs",
-                "green", attrs=["reverse"]))
-            logger.info(colored(
-                f"avg gt over {tot}steps X {gs} g-steps: {np.mean(gtl)}secs",
-                "green"))
-            logger.info(colored(
-                f"avg dt over {tot}steps X {ds} d-steps: {np.mean(dtl)}secs",
-                "green"))
+        logger.info(colored(
+            f"avg tt over {tot}steps: {np.mean(ttl)}secs",
+            "green", attrs=["reverse"]))
+        logger.info(colored(
+            f"avg gt over {tot}steps X {gs} g-steps: {np.mean(gtl)}secs",
+            "green"))
+        logger.info(colored(
+            f"avg dt over {tot}steps X {ds} d-steps: {np.mean(dtl)}secs",
+            "green"))
+        logger.info(colored(
+            f"tot tt over {tot}steps: {np.sum(ttl)}secs",
+            "magenta", attrs=["reverse"]))
 
         i += 1
 
         if i % cfg.eval_every == 0:
 
-            with timed("evaluating"):
+            logger.info(("eval").upper())
 
-                len_buff, env_ret_buff = [], []
+            len_buff, env_ret_buff = [], []
 
-                for j in range(cfg.eval_steps_per_iter):
+            for j in range(cfg.eval_steps_per_iter):
 
-                    # sample an episode with non-perturbed actor
-                    ep = next(ep_gen)
-                    # none of it is collected in the replay buffer
+                # sample an episode with non-perturbed actor
+                ep = next(ep_gen)
+                # none of it is collected in the replay buffer
 
-                    len_buff.append(ep["ep_len"])
-                    env_ret_buff.append(ep["ep_env_ret"])
+                len_buff.append(ep["ep_len"])
+                env_ret_buff.append(ep["ep_env_ret"])
 
-                    if cfg.record:
-                        # record a video of the episode
-                        # ref: https://younis.dev/blog/render-api/
-                        frame_collection = eval_env.render()
-                        record_video(vid_dir, f"iter{i}-ep{j}", np.array(frame_collection))
+                if cfg.record:
+                    # record a video of the episode
+                    # ref: https://younis.dev/blog/render-api/
+                    frame_collection = eval_env.render()
+                    record_video(vid_dir, f"iter{i}-ep{j}", np.array(frame_collection))
 
-                eval_metrics: dict[str, np.ndarray] = {
-                    "ep_len": np.array(len_buff), "ep_env_ret": np.array(env_ret_buff)}
+            eval_metrics: dict[str, np.ndarray] = {
+                "ep_len": np.array(len_buff), "ep_env_ret": np.array(env_ret_buff)}
 
-                # log stats in csv
-                logger.record_tabular("timestep", agent.timesteps_so_far)
-                for k, v in eval_metrics.items():
-                    logger.record_tabular(f"{k}-mean", v.mean())
-                logger.info("dumping stats in .csv file")
-                logger.dump_tabular()
+            # log stats in csv
+            logger.record_tabular("timestep", agent.timesteps_so_far)
+            for k, v in eval_metrics.items():
+                logger.record_tabular(f"{k}-mean", v.mean())
+            logger.info("dumping stats in .csv file")
+            logger.dump_tabular()
 
-                # log stats in dashboard
-                agent.send_to_dash(
-                    {f"{k}-mean": v.mean() for k, v in eval_metrics.items()},
-                    step_metric=agent.timesteps_so_far,
-                    glob="eval",
-                )
+            # log stats in dashboard
+            agent.send_to_dash(
+                {f"{k}-mean": v.mean() for k, v in eval_metrics.items()},
+                step_metric=agent.timesteps_so_far,
+                glob="eval",
+            )
+
         logger.info()
 
     # save once we are done
