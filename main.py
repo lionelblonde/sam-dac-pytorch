@@ -187,6 +187,7 @@ class MagicRunner(object):
                 max_ac=max_ac,
                 device=device,
                 hps=self._cfg,
+                actr_noise_rng=torch.Generator(device).manual_seed(self._cfg.seed),
                 expert_dataset=expert_dataset,
                 replay_buffers=replay_buffers,
             )
@@ -256,6 +257,7 @@ class MagicRunner(object):
                 max_ac=max_ac,
                 device=device,
                 hps=self._cfg,
+                actr_noise_rng=torch.Generator(device).manual_seed(self._cfg.seed),
                 expert_dataset=None,
                 replay_buffers=None,
             )

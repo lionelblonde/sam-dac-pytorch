@@ -1,3 +1,5 @@
+import math
+from contextlib import nullcontext
 from collections import OrderedDict
 from typing import Callable
 
@@ -13,6 +15,8 @@ from helpers.normalizer import RunningMoments
 
 
 STANDARDIZED_OB_CLAMPS = [-5., 5.]
+SAC_MEAN_CLAMPS = [-9., 9.]
+SAC_LOG_STD_CLAMPS = [-5., 2.]
 
 
 @beartype
@@ -62,6 +66,67 @@ def snwrap(*, use_sn: bool = False) -> Callable[[nn.Module], nn.Module]:
         return m
 
     return _snwrap
+
+
+@beartype
+def arctanh(x: torch.Tensor) -> torch.Tensor:
+    """Implementation of the arctanh function.
+    Can be very numerically unstable, hence the clamping.
+    """
+    one_plus_x = (1 + x).clamp(min=1e-6)
+    one_minus_x = (1 - x).clamp(min=1e-6)
+    return 0.5 * torch.log(one_plus_x / one_minus_x)
+    # alternative impl.: return 0.5 * (x.log1p() - (-x).log1p())
+    # TODO(lionel): compare against alternative above
+
+
+class NormalToolkit(object):
+    """Technically, multivariate normal with diagonal covariance"""
+
+    @beartype
+    @staticmethod
+    def logp(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+        neglogp = (0.5 * ((x - mean) / std).pow(2).sum(dim=-1, keepdim=True) +
+                   0.5 * math.log(2 * math.pi) +
+                   std.log().sum(dim=-1, keepdim=True))
+        return -neglogp
+
+    @beartype
+    @staticmethod
+    def sample(mean: torch.Tensor, std: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
+        # re-parametrization trick
+        eps = torch.empty(mean.size()).to(mean.device).normal_(generator=generator)
+        eps.requires_grad = False
+        return mean + std * eps
+
+    @beartype
+    @staticmethod
+    def mode(mean: torch.Tensor) -> torch.Tensor:
+        return mean
+
+
+class TanhNormalToolkit(object):
+    """Technically, multivariate normal with diagonal covariance"""
+
+    @beartype
+    @staticmethod
+    def logp(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+        # We need to assemble the logp of a sample which comes from a Gaussian sample
+        # after being mapped through a tanh. This needs a change of variable.
+        # See appendix C of the SAC paper for an explanation of this change of variable.
+        logp = NormalToolkit.logp(arctanh(x), mean, std) - torch.log(1 - x.pow(2) + 1e-6)
+        return logp.sum(-1, keepdim=True)
+
+    @beartype
+    @staticmethod
+    def sample(mean: torch.Tensor, std: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
+        sample = NormalToolkit.sample(mean, std, generator)
+        return torch.tanh(sample)
+
+    @beartype
+    @staticmethod
+    def mode(mean: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(mean)
 
 
 # models
@@ -122,7 +187,7 @@ class Discriminator(nn.Module):
         self.d_head.apply(init())
 
     @beartype
-    def forward(self, input_a, input_b):
+    def forward(self, input_a: torch.Tensor, input_b: torch.Tensor) -> torch.Tensor:
         if self.d_batch_norm:
             # apply normalization
             if self.wrap_absorb:
@@ -164,39 +229,36 @@ class Actor(nn.Module):
                  *,
                  layer_norm: bool):
         super().__init__()
-        ob_dim = ob_shape[-1]
-        ac_dim = ac_shape[-1]
+        self.ob_dim = ob_shape[-1]  # needed in child class
+        self.ac_dim = ac_shape[-1]  # needed in child class
         self.rms_obs = rms_obs
         self.max_ac = max_ac
         self.layer_norm = layer_norm
 
         # assemble the last layers and output heads
         self.fc_stack = nn.Sequential(OrderedDict([
-            ("fc_block", nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(ob_dim, 300)),
-                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
+            ("fc_block_1", nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(self.ob_dim, hid_dims[0])),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(hid_dims[0])),
+                ("nl", nn.ReLU()),
+            ]))),
+            ("fc_block_2", nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(hid_dims[0], hid_dims[1])),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(hid_dims[1])),
                 ("nl", nn.ReLU()),
             ]))),
         ]))
-        self.a_fc_stack = nn.Sequential(OrderedDict([
-            ("fc_block", nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(300, 200)),
-                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(200)),
-                ("nl", nn.ReLU()),
-            ]))),
-        ]))
-        self.a_head = nn.Linear(200, ac_dim)
+        self.head = nn.Linear(hid_dims[1], self.ac_dim)
 
         # perform initialization
         self.fc_stack.apply(init())
-        self.a_fc_stack.apply(init())
-        self.a_head.apply(init())
+        self.head.apply(init())
 
     @beartype
-    def forward(self, ob):
+    def act(self, ob: torch.Tensor) -> torch.Tensor:
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x = self.fc_stack(ob)
-        return float(self.max_ac) * torch.tanh(self.a_head(self.a_fc_stack(x)))
+        return float(self.max_ac) * torch.tanh(self.head(x))
 
 
 class Critic(nn.Module):
@@ -205,6 +267,7 @@ class Critic(nn.Module):
     def __init__(self,
                  ob_shape: tuple[int, ...],
                  ac_shape: tuple[int, ...],
+                 hid_dims: tuple[int, int],
                  rms_obs: RunningMoments,
                  *,
                  layer_norm: bool,
@@ -233,24 +296,24 @@ class Critic(nn.Module):
         # assemble the last layers and output heads
         self.fc_stack = nn.Sequential(OrderedDict([
             ("fc_block_1", nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(ob_dim + ac_dim, 400)),
-                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(400)),
+                ("fc", nn.Linear(ob_dim + ac_dim, hid_dims[0])),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(hid_dims[0])),
                 ("nl", nn.ReLU()),
             ]))),
             ("fc_block_2", nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(400, 300)),
-                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(300)),
+                ("fc", nn.Linear(hid_dims[0], hid_dims[1])),
+                ("ln", (nn.LayerNorm if self.layer_norm else nn.Identity)(hid_dims[1])),
                 ("nl", nn.ReLU()),
             ]))),
         ]))
-        self.head = nn.Linear(300, num_heads)
+        self.head = nn.Linear(hid_dims[1], num_heads)
 
         # perform initialization
         self.fc_stack.apply(init())
         self.head.apply(init())
 
     @beartype
-    def forward(self, ob, ac):
+    def forward(self, ob: torch.Tensor, ac: torch.Tensor) -> torch.Tensor:
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x, _ = pack([ob, ac], "b *")
         x = self.fc_stack(x)
@@ -259,3 +322,62 @@ class Critic(nn.Module):
             # return a categorical distribution
             x = ff.log_softmax(x, dim=1).exp()
         return x
+
+
+# SAC
+
+class TanhGaussActor(Actor):
+
+    @beartype
+    def __init__(self,
+                 ob_shape: tuple[int, ...],
+                 ac_shape: tuple[int, ...],
+                 hid_dims: tuple[int, int],
+                 rms_obs: RunningMoments,
+                 max_ac: float,
+                 *,
+                 generator: torch.Generator,
+                 state_dependent_std: bool,
+                 layer_norm: bool):
+        super().__init__(ob_shape, ac_shape, hid_dims, rms_obs, max_ac, layer_norm=layer_norm)
+        self.rng = generator
+        self.state_dependent_std = state_dependent_std
+        # overwrite head
+        if self.state_dependent_std:
+            self.head = nn.Linear(hid_dims[1], 2 * self.ac_dim)
+        else:
+            self.head = nn.Linear(hid_dims[1], self.ac_dim)
+            self.ac_logstd_head = nn.Parameter(torch.full((self.ac_dim,), math.log(0.6)))
+        # perform initialization (since head written over)
+        self.head.apply(init())
+        # no need to init the Parameter type object
+
+    @beartype
+    def logp(self, ob: torch.Tensor, ac: torch.Tensor) -> torch.Tensor:
+        out = self.mean_std(ob)
+        return TanhNormalToolkit.logp(ac, *out)  # mean, std
+
+    @beartype
+    def sample(self, ob: torch.Tensor, *, stop_grad: bool = True) -> torch.Tensor:
+        with torch.no_grad() if stop_grad else nullcontext():
+            out = self.mean_std(ob)
+            return float(self.max_ac) * TanhNormalToolkit.sample(*out, generator=self.rng)
+
+    @beartype
+    def mode(self, ob: torch.Tensor, *, stop_grad: bool = True) -> torch.Tensor:
+        with torch.no_grad() if stop_grad else nullcontext():
+            mean, _ = self.mean_std(ob)
+            return float(self.max_ac) * TanhNormalToolkit.mode(mean)
+
+    @beartype
+    def mean_std(self, ob: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
+        x = self.fc_stack(ob)
+        if self.state_dependent_std:
+            ac_mean, ac_log_std = self.head(x).chunk(2, dim=-1)
+            ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
+            ac_std = ac_log_std.clamp(*SAC_LOG_STD_CLAMPS).exp()
+        else:
+            ac_mean = self.head(x).clamp(*SAC_MEAN_CLAMPS)
+            ac_std = self.ac_logstd_head.expand_as(ac_mean).clamp(*SAC_LOG_STD_CLAMPS).exp()
+        return ac_mean, ac_std
