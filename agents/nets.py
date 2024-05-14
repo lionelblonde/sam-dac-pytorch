@@ -79,7 +79,7 @@ class Discriminator(nn.Module):
                  d_batch_norm: bool,
                  spectral_norm: bool,
                  state_only: bool):
-        super(Discriminator, self).__init__()
+        super().__init__()
         self.wrap_absorb = wrap_absorb
         self.d_batch_norm = d_batch_norm
         self.spectral_norm = spectral_norm
@@ -150,17 +150,20 @@ class Discriminator(nn.Module):
         return self.d_head(x)  # no sigmoid here
 
 
+# TD3 (diffs: original uses no layer norm, no obs normalizer)
+
 class Actor(nn.Module):
 
     @beartype
     def __init__(self,
                  ob_shape: tuple[int, ...],
                  ac_shape: tuple[int, ...],
+                 hid_dims: tuple[int, int],
                  rms_obs: RunningMoments,
                  max_ac: float,
                  *,
                  layer_norm: bool):
-        super(Actor, self).__init__()
+        super().__init__()
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
         self.rms_obs = rms_obs
@@ -209,7 +212,7 @@ class Critic(nn.Module):
                  c51_num_atoms: int,
                  use_qr: bool,
                  num_tau: int):
-        super(Critic, self).__init__()
+        super().__init__()
         ob_dim = ob_shape[-1]
         ac_dim = ac_shape[-1]
         self.rms_obs = rms_obs
