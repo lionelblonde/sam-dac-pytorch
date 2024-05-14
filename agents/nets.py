@@ -195,16 +195,6 @@ class Actor(nn.Module):
         x = self.fc_stack(ob)
         return float(self.max_ac) * torch.tanh(self.a_head(self.a_fc_stack(x)))
 
-    @beartype
-    @property
-    def perturbable_params(self):
-        return [n for n, _ in self.named_parameters() if "ln" not in n]
-
-    @beartype
-    @property
-    def non_perturbable_params(self):
-        return [n for n, _ in self.named_parameters() if "ln" in n]
-
 
 class Critic(nn.Module):
 
