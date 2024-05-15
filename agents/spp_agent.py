@@ -276,7 +276,7 @@ class SPPAgent(object):
         else:
             # using SAC
             diff_action_from_actr = self.actr.sample(state, stop_grad=False)
-            log_prob = self.actr.logp(state, diff_action_from_actr.detach())
+            log_prob = self.actr.logp(state, diff_action_from_actr, self.max_ac)
 
         if self.hps.use_c51:
 
