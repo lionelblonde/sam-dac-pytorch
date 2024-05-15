@@ -391,8 +391,8 @@ class SPPAgent(object):
 
             if not self.hps.prefer_td3_over_sac:  # only for SAC
                 # add the causal entropy regularization term
-                next_log_prob = self.actr.logp(next_state, next_action.detach())
-                q_prime -= self.hps.alpha * next_log_prob
+                next_log_prob = self.actr.logp(next_state, next_action, self.max_ac)
+                q_prime -= self.hps.alpha * next_log_prob.detach()  # security detach
 
             # assemble the Bellman target
             targ_q = (reward +
