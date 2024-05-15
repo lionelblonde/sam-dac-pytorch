@@ -77,7 +77,7 @@ def arctanh(x: torch.Tensor) -> torch.Tensor:
     one_minus_x = (1 - x).clamp(min=1e-6)
     return 0.5 * torch.log(one_plus_x / one_minus_x)
     # alternative impl.: return 0.5 * (x.log1p() - (-x).log1p())
-    # TODO(lionel): compare against alternative above
+    # this one is not numerically stable, and neither is torch.atanh
 
 
 class NormalToolkit(object):
