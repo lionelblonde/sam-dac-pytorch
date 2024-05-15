@@ -97,7 +97,7 @@ class NormalToolkit(object):
         # re-parametrization trick
         eps = torch.empty(mean.size()).to(mean.device).normal_(generator=generator)
         eps.requires_grad = False
-        return mean + std * eps
+        return mean + (std * eps)
 
     @beartype
     @staticmethod
