@@ -110,12 +110,17 @@ class TanhNormalToolkit(object):
 
     @beartype
     @staticmethod
-    def logp(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
-        # We need to assemble the logp of a sample which comes from a Gaussian sample
+    def logp(x: torch.Tensor,
+             mean: torch.Tensor,
+             std: torch.Tensor,
+             *,
+             x_scale: float) -> torch.Tensor:
+        # we need to assemble the logp of a sample which comes from a Gaussian sample
         # after being mapped through a tanh. This needs a change of variable.
         # See appendix C of the SAC paper for an explanation of this change of variable.
-        logp = NormalToolkit.logp(arctanh(x), mean, std) - torch.log(1 - x.pow(2) + 1e-6)
-        return logp.sum(-1, keepdim=True)
+        logp1 = NormalToolkit.logp(arctanh(x / x_scale), mean, std)
+        logp2 = (torch.log(x_scale * (1 - (x / x_scale).pow(2)) + 1e-6)).sum(dim=-1, keepdim=True)
+        return logp1 - logp2
 
     @beartype
     @staticmethod
