@@ -358,9 +358,9 @@ class TanhGaussActor(Actor):
         # no need to init the Parameter type object
 
     @beartype
-    def logp(self, ob: torch.Tensor, ac: torch.Tensor) -> torch.Tensor:
+    def logp(self, ob: torch.Tensor, ac: torch.Tensor, max_ac: float) -> torch.Tensor:
         out = self.mean_std(ob)
-        return TanhNormalToolkit.logp(ac, *out)  # mean, std
+        return TanhNormalToolkit.logp(ac, *out, x_scale=max_ac)  # mean, std
 
     @beartype
     def sample(self, ob: torch.Tensor, *, stop_grad: bool = True) -> torch.Tensor:
