@@ -16,7 +16,7 @@ from helpers.normalizer import RunningMoments
 
 STANDARDIZED_OB_CLAMPS = [-5., 5.]
 SAC_MEAN_CLAMPS = [-9., 9.]
-SAC_LOG_STD_CLAMPS = [-5., 2.]
+SAC_LOG_STD_CLAMPS = [-5., 2.]  # openai/spinningup uses -20 instead of -5
 
 
 @beartype
