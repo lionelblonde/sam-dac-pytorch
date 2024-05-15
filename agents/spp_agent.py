@@ -412,6 +412,8 @@ class SPPAgent(object):
             actr_loss = -self.crit(state, diff_action_from_actr)
             if not self.hps.prefer_td3_over_sac:  # only for SAC
                 actr_loss += (self.hps.alpha * log_prob)
+                if not actr_loss.mean().isfinite():
+                    raise ValueError("NaNs: numerically unstable arctanh func")
 
         actr_loss = actr_loss.mean()
 
