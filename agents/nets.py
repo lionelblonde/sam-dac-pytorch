@@ -380,9 +380,10 @@ class TanhGaussActor(Actor):
         x = self.fc_stack(ob)
         if self.state_dependent_std:
             ac_mean, ac_log_std = self.head(x).chunk(2, dim=-1)
-            ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
+            # ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
             ac_std = ac_log_std.clamp(*SAC_LOG_STD_CLAMPS).exp()
         else:
-            ac_mean = self.head(x).clamp(*SAC_MEAN_CLAMPS)
+            ac_mean = self.head(x)
+            # ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
             ac_std = self.ac_logstd_head.expand_as(ac_mean).clamp(*SAC_LOG_STD_CLAMPS).exp()
         return ac_mean, ac_std
