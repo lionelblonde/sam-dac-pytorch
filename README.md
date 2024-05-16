@@ -21,6 +21,9 @@ As such, adapting the code to support non-addressed environments that follow thi
 automatic at best, and fairly straightforward at worst.
 No extension to other APIs is planned at this time.
 
+(The S++ was chosen just to have something short and simple to denote
+_improved versions_ of __SOTA__ _sample-efficient_ adversarial IL methods.)
+
 ## Note on devices
 
 For the proposed YAML configurations, training the actor-critic is faster on GPU than CPU.
