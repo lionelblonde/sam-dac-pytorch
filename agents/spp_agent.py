@@ -271,12 +271,12 @@ class SPPAgent(object):
 
         if self.hps.prefer_td3_over_sac:
             # using TD3
-            diff_action_from_actr = self.actr.act(state)
-            log_prob = None
+            action_from_actr = self.actr.act(state)
+            log_prob = None  # quiets down the type checker
         else:
             # using SAC
-            diff_action_from_actr = self.actr.sample(state, stop_grad=False)
-            log_prob = self.actr.logp(state, diff_action_from_actr, self.max_ac)
+            action_from_actr = self.actr.sample(state, stop_grad=False)
+            log_prob = self.actr.logp(state, action_from_actr, self.max_ac)
             # here, there are two gradient pathways: the reparam trick makes the sampling process
             # differentiable (pathwise derivative), and logp is a score function gradient estimator
             # intuition: aren't they competing and therefore messing up with each other's compute
@@ -334,7 +334,7 @@ class SPPAgent(object):
             crit_loss = ce_losses.mean()
 
             # actor loss
-            actr_loss = -self.crit(state, diff_action_from_actr)  # [batch_size, num_atoms]
+            actr_loss = -self.crit(state, action_from_actr)  # [batch_size, num_atoms]
             # we matmul by the transpose of rearranged `c51_supp` of shape [1, c51_num_atoms]
             actr_loss = actr_loss.matmul(c51_supp.t())  # resulting shape: [batch_size, 1]
 
@@ -382,7 +382,7 @@ class SPPAgent(object):
             crit_loss = crit_loss.mean()
 
             # actor loss
-            actr_loss = -self.crit(state, diff_action_from_actr)
+            actr_loss = -self.crit(state, action_from_actr)
 
         else:
 
@@ -423,9 +423,11 @@ class SPPAgent(object):
             twin_loss = ff.smooth_l1_loss(twin_q, targ_q)  # overwrites the None initially set
 
             # actor loss
-            actr_loss = -self.crit(state, diff_action_from_actr)
-            if not self.hps.prefer_td3_over_sac:  # only for SAC
-                actr_loss += (self.hps.alpha * log_prob)
+            if self.hps.prefer_td3_over_sac:
+                actr_loss = -self.crit(state, action_from_actr)
+            else:
+                actr_loss = (self.hps.alpha * log_prob) - torch.min(
+                    self.crit(state, action_from_actr), self.twin(state, action_from_actr))
                 if not actr_loss.mean().isfinite():
                     raise ValueError("NaNs: numerically unstable arctanh func")
 
