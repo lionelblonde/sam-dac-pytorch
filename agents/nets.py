@@ -73,6 +73,12 @@ def arctanh(x: torch.Tensor) -> torch.Tensor:
     """Implementation of the arctanh function.
     Can be very numerically unstable, hence the clamping.
     """
+    out = torch.atanh(x)
+    if out.sum().isfinite():
+        # note: a sum() is often faster than a any() or all()
+        # there might be edge cases but at worst we use the clamped version and get notified
+        return out
+    logger.warn("using a numerically stable (and clamped) arctanh")
     one_plus_x = (1 + x).clamp(
         min=ARCTANH_EPS)
     one_minus_x = (1 - x).clamp(
