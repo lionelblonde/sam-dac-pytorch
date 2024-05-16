@@ -1,10 +1,10 @@
-# S++: simple name for the SAM / DAC algorithm
+# S++: Sample-efficient Adversarial Imitation Learning (incl. SAM / DAC algorithms)
 
 PyTorch implementation (with up-to-date tooling) of the SAM / DAC algorithm,
 which are sample-efficient adversarial imitation learning techniques.
 Links:
-* DAC, ICLR 2019: https://arxiv.org/abs/1809.02925 
-* SAM, AISTATS 2019: https://arxiv.org/abs/1809.02064
+* __SAM__, AISTATS 2019: https://arxiv.org/abs/1809.02064
+* __DAC__, ICLR 2019: https://arxiv.org/abs/1809.02925 
 
 In their original form, SAM uses a DDPG stem, while DAC uses a TD3 stem
 (TD3, Twin Delayed DDPG, is an evolved version of DDPG:
