@@ -157,6 +157,18 @@ class SPPAgent(object):
                 weight_decay=self.hps.wd_scale,
             )
 
+        self.log_alpha = torch.tensor(self.hps.alpha_init).log().to(self.device)
+        # the previous line is here for the alpha property to always exist
+        if not self.hps.prefer_td3_over_sac:
+            # create learnable Lagrangian multiplier
+            # common trick: learn log(alpha) instead of alpha directly
+            self.log_alpha.requires_grad = True
+            self.targ_ent = -self.ac_shape[-1]  # set target entropy to -|A|
+            self.loga_opt = torch.optim.Adam(
+                [self.log_alpha],
+                lr=self.hps.log_alpha_lr,
+            )
+
         # set up lr scheduler
         self.actr_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.actr_opt,
@@ -178,6 +190,10 @@ class SPPAgent(object):
         if self.hps.clipped_double:
             log_module_info(self.twin)
         log_module_info(self.disc)
+
+    @property
+    def alpha(self):
+        return self.log_alpha.exp()
 
     @beartype
     def norm_rets(self, x: torch.Tensor) -> torch.Tensor:
@@ -264,10 +280,12 @@ class SPPAgent(object):
                        done: torch.Tensor,
                        td_len: torch.Tensor) -> tuple[torch.Tensor,
                                                       torch.Tensor,
+                                                      Optional[torch.Tensor],
                                                       Optional[torch.Tensor]]:
         """Compute the critic and actor losses"""
 
         twin_loss = None
+        loga_loss = None
 
         if self.hps.prefer_td3_over_sac:
             # using TD3
@@ -406,14 +424,14 @@ class SPPAgent(object):
             if not self.hps.prefer_td3_over_sac:  # only for SAC
                 # add the causal entropy regularization term
                 next_log_prob = self.actr.logp(next_state, next_action, self.max_ac)
-                q_prime -= self.hps.alpha * next_log_prob.detach()  # security detach
+                q_prime -= self.alpha.detach() * next_log_prob
 
             # assemble the Bellman target
-            targ_q = (reward +
-                      (self.hps.gamma ** td_len) * (1. - done) *
-                      q_prime.detach())
-            targ_q = self.norm_rets(targ_q)
+            targ_q = (reward + (self.hps.gamma ** td_len) * (1. - done) * q_prime)
 
+            targ_q = targ_q.detach()
+
+            targ_q = self.norm_rets(targ_q)
             if self.hps.ret_norm:
                 # update the running stats
                 self.rms_ret.update(targ_q)
@@ -426,14 +444,19 @@ class SPPAgent(object):
             if self.hps.prefer_td3_over_sac:
                 actr_loss = -self.crit(state, action_from_actr)
             else:
-                actr_loss = (self.hps.alpha * log_prob) - torch.min(
+                actr_loss = (self.alpha.detach() * log_prob) - torch.min(
                     self.crit(state, action_from_actr), self.twin(state, action_from_actr))
                 if not actr_loss.mean().isfinite():
                     raise ValueError("NaNs: numerically unstable arctanh func")
 
+            if (not self.hps.prefer_td3_over_sac) and self.hps.learnable_alpha:
+                assert log_prob is not None
+                loga_loss = (self.log_alpha * (-log_prob - self.targ_ent).detach()).mean()
+                # we use log(alpha) here but would work with alpha as well
+
         actr_loss = actr_loss.mean()
 
-        return actr_loss, crit_loss, twin_loss
+        return actr_loss, crit_loss, twin_loss, loga_loss
 
     @beartype
     @staticmethod
@@ -491,11 +514,11 @@ class SPPAgent(object):
             next_action = self.actr.sample(next_state, stop_grad=True)
 
         # compute critic and actor losses
-        actr_loss, crit_loss, twin_loss = self.compute_losses(
+        actr_loss, crit_loss, twin_loss, loga_loss = self.compute_losses(
             state, action, next_state, next_action, reward, done, td_len,
         )  # if `twin_loss` is None at this point, it means we are using C51 or QR
 
-        if update_actr:
+        if update_actr or (not self.hps.prefer_td3_over_sac):
 
             # update actor
             self.actr_opt.zero_grad()
@@ -517,6 +540,13 @@ class SPPAgent(object):
                     glob="train_actr",
                 )
 
+        if loga_loss is not None:
+            # update log(alpha), and therefore alpha
+            assert (not self.hps.prefer_td3_over_sac) and self.hps.learnable_alpha
+            self.loga_opt.zero_grad()
+            loga_loss.backward()
+            self.loga_opt.step()
+
         # update critic
         self.crit_opt.zero_grad()
         crit_loss.backward()
@@ -533,6 +563,9 @@ class SPPAgent(object):
             wandb_dict = {"crit_loss": crit_loss.numpy(force=True)}
             if twin_loss is not None:
                 wandb_dict.update({"twin_loss": twin_loss.numpy(force=True)})
+            if not self.hps.prefer_td3_over_sac:
+                wandb_dict.update({"alpha": self.alpha.numpy(force=True)})
+                # here to reduce networking overhead
             self.send_to_dash(
                 wandb_dict,
                 step_metric=self.crit_updates_so_far,
