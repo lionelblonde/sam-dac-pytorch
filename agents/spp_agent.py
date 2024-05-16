@@ -519,6 +519,7 @@ class SPPAgent(object):
         )  # if `twin_loss` is None at this point, it means we are using C51 or QR
 
         if update_actr or (not self.hps.prefer_td3_over_sac):
+            # choice: for SAC, always update the actor and log(alpha)
 
             # update actor
             self.actr_opt.zero_grad()
@@ -527,25 +528,30 @@ class SPPAgent(object):
                 cg.clip_grad_norm_(self.actr.parameters(), self.hps.clip_norm)
             self.actr_opt.step()
 
+            self.actr_updates_so_far += 1
+
             # update lr
             self.actr_sched.step()
 
-            self.actr_updates_so_far += 1
+            if loga_loss is not None:
+                # update log(alpha), and therefore alpha
+                assert (not self.hps.prefer_td3_over_sac) and self.hps.learnable_alpha
+                self.loga_opt.zero_grad()
+                loga_loss.backward()
+                self.loga_opt.step()
 
             if self.actr_updates_so_far % self.TRAIN_METRICS_WANDB_LOG_FREQ == 0:
+                wandb_dict = {
+                    "actr_loss": actr_loss.numpy(force=True),
+                    "actr_lr": np.array(self.actr_sched.get_last_lr()[0]).astype(np.float64),
+                }
+                if not self.hps.prefer_td3_over_sac:
+                    wandb_dict.update({"alpha": self.alpha.numpy(force=True)})
                 self.send_to_dash(
-                    {"actr_loss": actr_loss.numpy(force=True),
-                     "actr_lr": np.array(self.actr_sched.get_last_lr()[0]).astype(np.float64)},
+                    wandb_dict,
                     step_metric=self.actr_updates_so_far,
                     glob="train_actr",
                 )
-
-        if loga_loss is not None:
-            # update log(alpha), and therefore alpha
-            assert (not self.hps.prefer_td3_over_sac) and self.hps.learnable_alpha
-            self.loga_opt.zero_grad()
-            loga_loss.backward()
-            self.loga_opt.step()
 
         # update critic
         self.crit_opt.zero_grad()
@@ -563,9 +569,6 @@ class SPPAgent(object):
             wandb_dict = {"crit_loss": crit_loss.numpy(force=True)}
             if twin_loss is not None:
                 wandb_dict.update({"twin_loss": twin_loss.numpy(force=True)})
-            if not self.hps.prefer_td3_over_sac:
-                wandb_dict.update({"alpha": self.alpha.numpy(force=True)})
-                # here to reduce networking overhead
             self.send_to_dash(
                 wandb_dict,
                 step_metric=self.crit_updates_so_far,
