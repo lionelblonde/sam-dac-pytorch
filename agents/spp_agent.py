@@ -573,7 +573,9 @@ class SPPAgent(object):
             )
 
         # update target nets
-        self.update_target_net()
+        if (self.hps.prefer_td3_over_sac or
+            self.crit_updates_so_far % self.hps.crit_targ_update_freq == 0):
+            self.update_target_net()
 
     @beartype
     def update_disc(self, batch: dict[str, torch.Tensor]):

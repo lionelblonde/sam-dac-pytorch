@@ -52,6 +52,7 @@ state_dependent_std: true
 alpha_init: 0.1
 learnable_alpha: true
 log_alpha_lr: 1e-4
+crit_targ_update_freq: 2
 
 # distributional RL
 use_c51: false
