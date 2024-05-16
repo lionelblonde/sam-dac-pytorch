@@ -2,6 +2,16 @@
 
 PyTorch implementation (with up-to-date tooling) of the SAM / DAC algorithm,
 which are sample-efficient adversarial imitation learning techniques.
+Links:
+* DAC, ICLR 2019: https://arxiv.org/abs/1809.02925 
+* SAM, AISTATS 2019: https://arxiv.org/abs/1809.02064
+
+In their original form, SAM uses a DDPG stem, while DAC uses a TD3 stem
+(TD3, Twin Delayed DDPG, is an evolved version of DDPG:
+https://spinningup.openai.com/en/latest/algorithms/td3.html).
+In this codebase, there are two choices of stem: TD3, and SAC
+(https://spinningup.openai.com/en/latest/algorithms/sac.html).
+The choice of stem is controlled by the boolean hyper-parameter `prefer_td3_over_sac`.
 
 While the previous versions were using an MPI-based distribution scheme,
 the current version aligns with the current practises consisting in using vectorized environments.
@@ -36,4 +46,3 @@ Download the expert demonstrations complementing this repository and make them a
 [this link](https://drive.google.com/drive/folders/1dGw-O6ZT_WWTuqDayIA9xat1jZgeiXoE?usp=sharing);
 - Place them at the desired location in your filesystem;
 - Create the environment variable: `export DEMO_DIR=/where/you/downloaded/and/placed/the/demos`.
-
