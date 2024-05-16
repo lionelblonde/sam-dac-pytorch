@@ -277,6 +277,20 @@ class SPPAgent(object):
             # using SAC
             diff_action_from_actr = self.actr.sample(state, stop_grad=False)
             log_prob = self.actr.logp(state, diff_action_from_actr, self.max_ac)
+            # here, there are two gradient pathways: the reparam trick makes the sampling process
+            # differentiable (pathwise derivative), and logp is a score function gradient estimator
+            # intuition: aren't they competing and therefore messing up with each other's compute
+            # graphs? to understand what happens, write down the closed form of the Normal's logp
+            # (or see this formula in nets.py) and replace x by mean + eps * std
+            # it shows that with both of these gradient pathways, the mean receives no gradient
+            # only the std receives some (they cancel out)
+            # moreover, if only the std receives gradient, we can expect subpar results if this std
+            # is state independent
+            # this can be observed here, and has been noted in openai/spinningup
+            # in native PyTorch, it is equivalent to using `log_prob` on a sample from `rsample`
+            # note also that detaching the action in the logp (using `sample`, and not `rsample`)
+            # yields to poor results, showing how allowing for non-zero gradients for the mean
+            # can have a destructive effect, and that is why SAC does not allow them to flow.
 
         if self.hps.use_c51:
 
