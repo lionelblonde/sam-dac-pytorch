@@ -15,8 +15,8 @@ from helpers.normalizer import RunningMoments
 
 
 STANDARDIZED_OB_CLAMPS = [-5., 5.]
-SAC_MEAN_CLAMPS = [-9., 9.]
-SAC_LOG_STD_CLAMPS = [-5., 2.]  # openai/spinningup uses -20 instead of -5
+ARCTANH_EPS = 1e-8
+SAC_LOG_STD_BOUNDS = [-20., 2.]
 
 
 @beartype
@@ -73,11 +73,14 @@ def arctanh(x: torch.Tensor) -> torch.Tensor:
     """Implementation of the arctanh function.
     Can be very numerically unstable, hence the clamping.
     """
-    one_plus_x = (1 + x).clamp(min=1e-6)
-    one_minus_x = (1 - x).clamp(min=1e-6)
+    one_plus_x = (1 + x).clamp(
+        min=ARCTANH_EPS)
+    one_minus_x = (1 - x).clamp(
+        min=ARCTANH_EPS)
     return 0.5 * torch.log(one_plus_x / one_minus_x)
-    # alternative impl.: return 0.5 * (x.log1p() - (-x).log1p())
-    # this one is not numerically stable, and neither is torch.atanh
+    # equivalent to 0.5 * (x.log1p() - (-x).log1p()) but with NaN-proof clamping
+    # torch.atanh(x) is numerically unstable here
+    # note: with both of the methods above, we get NaN at the first iteration
 
 
 class NormalToolkit(object):
@@ -118,8 +121,12 @@ class TanhNormalToolkit(object):
         # we need to assemble the logp of a sample which comes from a Gaussian sample
         # after being mapped through a tanh. This needs a change of variable.
         # See appendix C of the SAC paper for an explanation of this change of variable.
-        logp1 = NormalToolkit.logp(arctanh(x / x_scale), mean, std)
-        logp2 = (torch.log(x_scale * (1 - (x / x_scale).pow(2)) + 1e-6)).sum(dim=-1, keepdim=True)
+        x_ = arctanh(x / x_scale)
+        logp1 = NormalToolkit.logp(x_, mean, std)
+        logp2 = 2. * (math.log(2.) - x_ - ff.softplus(-2. * x_))
+        logp2 = logp2.sum(dim=-1, keepdim=True)
+        # trick for numerical stability from:
+        # https://github.com/tensorflow/probability/commit/ef6bb176e0ebd1cf6e25c6b5cecdd2428c22963f#diff-e120f70e92e6741bca649f04fcd907b7
         return logp1 - logp2
 
     @beartype
@@ -375,15 +382,21 @@ class TanhGaussActor(Actor):
             return float(self.max_ac) * TanhNormalToolkit.mode(mean)
 
     @beartype
+    @staticmethod
+    def bound_log_std(log_std: torch.Tensor) -> torch.Tensor:
+        log_std = torch.tanh(log_std)
+        log_std_min, log_std_max = SAC_LOG_STD_BOUNDS
+        return log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
+
+    @beartype
     def mean_std(self, ob: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         ob = self.rms_obs.standardize(ob).clamp(*STANDARDIZED_OB_CLAMPS)
         x = self.fc_stack(ob)
         if self.state_dependent_std:
             ac_mean, ac_log_std = self.head(x).chunk(2, dim=-1)
-            # ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
-            ac_std = ac_log_std.clamp(*SAC_LOG_STD_CLAMPS).exp()
         else:
             ac_mean = self.head(x)
-            # ac_mean = ac_mean.clamp(*SAC_MEAN_CLAMPS)
-            ac_std = self.ac_logstd_head.expand_as(ac_mean).clamp(*SAC_LOG_STD_CLAMPS).exp()
+            ac_log_std = self.ac_logstd_head.expand_as(ac_mean)
+        ac_log_std = self.bound_log_std(ac_log_std)
+        ac_std = ac_log_std.exp()
         return ac_mean, ac_std
