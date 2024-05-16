@@ -46,3 +46,7 @@ Download the expert demonstrations complementing this repository and make them a
 [this link](https://drive.google.com/drive/folders/1dGw-O6ZT_WWTuqDayIA9xat1jZgeiXoE?usp=sharing);
 - Place them at the desired location in your filesystem;
 - Create the environment variable: `export DEMO_DIR=/where/you/downloaded/and/placed/the/demos`.
+
+## Performance plots
+
+_Pending._
