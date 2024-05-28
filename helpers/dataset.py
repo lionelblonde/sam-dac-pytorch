@@ -63,6 +63,10 @@ class DemoDataset(object):
         self.data = defaultdict(list)
         logger.info("::::loading demos")
 
+        if wrap_absorb:
+            # we added one before if wrapping the absorbing transitions
+            max_ep_steps -= 1
+
         # go over the demos, sorted in alphabetical order
         for i, f in enumerate(sorted(Path(expert_path).glob("*.h5"))):
 
@@ -102,6 +106,7 @@ class DemoDataset(object):
 
             # determine if terminal because of timeout or real termination
             terminal = self.ep_len != max_ep_steps
+            logger.info(f"is the trj terminated? {self.ep_len}/{max_ep_steps} -> {terminal}")
 
             # subsample trajectory: trajectories are not contiguous sequences
             sub_rate = 20  # N=20 in the original GAIL paper
