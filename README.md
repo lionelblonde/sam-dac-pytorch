@@ -1,10 +1,12 @@
-# S++: Sample-efficient Adversarial Imitation Learning (incl. SAM / DAC algorithms)
+# Sample-efficient Adversarial Imitation Learning (incl. SAM / DAC algorithms)
 
 PyTorch implementation (with up-to-date tooling) of the SAM / DAC algorithm,
-which are sample-efficient adversarial imitation learning techniques.
+which are __SOTA__ sample-efficient adversarial imitation learning techniques.
 Links:
 * __SAM__, AISTATS 2019: https://arxiv.org/abs/1809.02064
 * __DAC__, ICLR 2019: https://arxiv.org/abs/1809.02925 
+
+The repository's name was chosen for conciseness and simplicity.
 
 In their original form, SAM uses a DDPG stem, while DAC uses a TD3 stem
 (TD3, Twin Delayed DDPG, is an evolved version of DDPG:
@@ -20,9 +22,6 @@ The agents developed interface with environments using the Gymnasium API.
 As such, adapting the code to support non-addressed environments that follow this API should be
 automatic at best, and fairly straightforward at worst.
 No extension to other APIs is planned at this time.
-
-(The S++ was chosen just to have something short and simple to denote
-_improved versions_ of __SOTA__ _sample-efficient_ adversarial IL methods.)
 
 ## Note on devices
 
