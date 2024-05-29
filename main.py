@@ -17,7 +17,7 @@ from helpers import logger
 from helpers.env_makers import make_env
 from helpers.dataset import DemoDataset
 from agents.memory import ReplayBuffer
-from agents.spp_agent import SPPAgent
+from agents.ail_agent import AilAgent
 
 
 @beartype
@@ -182,7 +182,7 @@ class MagicRunner(object):
             logger.info(f"rb#{i} [{rb}] is set")
 
         def agent_wrapper():
-            return SPPAgent(
+            return AilAgent(
                 net_shapes=net_shapes,
                 max_ac=max_ac,
                 device=device,
@@ -252,7 +252,7 @@ class MagicRunner(object):
 
         # create an agent wrapper
         def agent_wrapper():
-            return SPPAgent(
+            return AilAgent(
                 net_shapes=net_shapes,
                 max_ac=max_ac,
                 device=device,
