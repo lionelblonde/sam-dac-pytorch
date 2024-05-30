@@ -484,14 +484,10 @@ class AilAgent(object):
 
         with torch.no_grad():
             # define inputs
-            if self.hps.wrap_absorb:
-                state = batch["obs0_orig"]
-                action = batch["acs_orig"]
-                next_state = batch["obs1_orig"]
-            else:
-                state = batch["obs0"]
-                action = batch["acs"]
-                next_state = batch["obs1"]
+            sfx = "_orig" if self.hps.wrap_absorb else ""
+            state = batch[f"obs0{sfx}"]
+            action = batch[f"acs{sfx}"]
+            next_state = batch[f"obs1{sfx}"]
             reward = batch["rews"]
             done = batch["dones1"].float()
             td_len = batch["td_len"] if self.hps.n_step_returns else torch.ones_like(done)
