@@ -1,7 +1,8 @@
 import os
+import time
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 from beartype import beartype
 import fire
@@ -181,7 +182,8 @@ class MagicRunner(object):
         for i, rb in enumerate(replay_buffers):
             logger.info(f"rb#{i} [{rb}] is set")
 
-        def agent_wrapper():
+        @beartype
+        def agent_wrapper() -> AilAgent:
             return AilAgent(
                 net_shapes=net_shapes,
                 max_ac=max_ac,
@@ -191,6 +193,15 @@ class MagicRunner(object):
                 expert_dataset=expert_dataset,
                 replay_buffers=replay_buffers,
             )
+
+        @beartype
+        def timer_wrapper() -> Callable[[], float]:
+            def _timer() -> float:
+                if self._cfg.cuda:
+                    logger.warn("cuda syncing clocks")
+                    torch.cuda.synchronize()
+                return time.time()
+            return _timer
 
         # create an evaluation environment not to mess up with training rollouts
         eval_env, _, _, _, _ = make_env(
@@ -208,6 +219,7 @@ class MagicRunner(object):
             env=env,
             eval_env=eval_env,
             agent_wrapper=agent_wrapper,
+            timer_wrapper=timer_wrapper,
             name=name,
         )
 

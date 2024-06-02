@@ -109,9 +109,10 @@ class AilAgent(object):
 
         # create online and target nets
 
-        self.hid_dims = (400, 300) if self.hps.prefer_td3_over_sac else (256, 256)
+        actr_hid_dims = (300, 200) if self.hps.prefer_td3_over_sac else (256, 256)
+        crit_hid_dims = (400, 300) if self.hps.prefer_td3_over_sac else (256, 256)
 
-        actr_net_args = [self.ob_shape, self.ac_shape, self.hid_dims, self.rms_obs, self.max_ac]
+        actr_net_args = [self.ob_shape, self.ac_shape, actr_hid_dims, self.rms_obs, self.max_ac]
         actr_net_kwargs = {"layer_norm": self.hps.layer_norm}
         if not self.hps.prefer_td3_over_sac:
             actr_net_kwargs.update({
@@ -124,7 +125,7 @@ class AilAgent(object):
             # using TD3 (SAC does not use a target actor)
             self.targ_actr = Actor(*actr_net_args, **actr_net_kwargs).to(self.device)
 
-        crit_net_args = [self.ob_shape, self.ac_shape, self.hid_dims, self.rms_obs]
+        crit_net_args = [self.ob_shape, self.ac_shape, crit_hid_dims, self.rms_obs]
         crit_net_kwargs_keys = ["layer_norm", "use_c51", "c51_num_atoms", "use_qr", "num_tau"]
         crit_net_kwargs = {k: getattr(self.hps, k) for k in crit_net_kwargs_keys}
         self.crit = Critic(*crit_net_args, **crit_net_kwargs).to(self.device)
