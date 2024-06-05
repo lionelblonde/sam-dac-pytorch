@@ -363,7 +363,7 @@ def learn(cfg: DictConfig,
 
     # group by everything except the seed, which is last, hence index -1
     # it groups by uuid + gitSHA + env_id + num_demos
-    group = ".".join(name.split(".")[:-1])
+    group = ".".join(name.split(".")[:-2])
     # set up wandb
     while True:
         try:
