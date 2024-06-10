@@ -738,7 +738,7 @@ class AilAgent(object):
         if self.hps.minimax_only:
             reward = minimax_reward
         else:
-            # counterpart of GAN"s non-saturating loss
+            # counterpart of GAN's non-saturating loss
             # recommended in the original GAN paper and later in (Fedus et al. 2017)
             # numerics: 0 for expert-like states, goes to -inf for non-expert-like states
             # compatible with envs with traj cutoffs for good (expert-like) behavior
