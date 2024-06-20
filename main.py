@@ -182,6 +182,9 @@ class MagicRunner(object):
         for i, rb in enumerate(replay_buffers):
             logger.info(f"rb#{i} [{rb}] is set")
 
+        # perform quick sanity check on a ring buffer data structure
+        replay_buffers[0].ring_buffers["acs"].sanity_check_ringbuffer()
+
         @beartype
         def agent_wrapper() -> AilAgent:
             return AilAgent(
