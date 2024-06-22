@@ -22,7 +22,7 @@ from agents.ac_noise import NormalActionNoise
 from agents.memory import ReplayBuffer
 
 
-class AilAgent(object):
+class Agent(object):
 
     MAGIC_FACTOR: float = 0.1
     TRAIN_METRICS_WANDB_LOG_FREQ: int = 100

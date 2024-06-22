@@ -18,7 +18,7 @@ from helpers import logger
 from helpers.env_makers import make_env
 from helpers.dataset import DemoDataset
 from agents.memory import ReplayBuffer
-from agents.ail_agent import AilAgent
+from agents.agent import Agent
 
 
 @beartype
@@ -186,8 +186,8 @@ class MagicRunner(object):
         replay_buffers[0].ring_buffers["acs"].sanity_check_ringbuffer()
 
         @beartype
-        def agent_wrapper() -> AilAgent:
-            return AilAgent(
+        def agent_wrapper() -> Agent:
+            return Agent(
                 net_shapes=net_shapes,
                 max_ac=max_ac,
                 device=device,
@@ -267,7 +267,7 @@ class MagicRunner(object):
 
         # create an agent wrapper
         def agent_wrapper():
-            return AilAgent(
+            return Agent(
                 net_shapes=net_shapes,
                 max_ac=max_ac,
                 device=device,
