@@ -81,7 +81,7 @@ def segment(env: Union[Env, AsyncVectorEnv, SyncVectorEnv],
         new_ob, _, terminated, truncated, info = env.step(ac)  # reward ignored
 
         if isinstance(env, (AsyncVectorEnv, SyncVectorEnv)):
-            logger.warn(f"{terminated=} | {truncated=}")
+            logger.debug(f"{terminated=} | {truncated=}")
             assert isinstance(terminated, np.ndarray)
             assert isinstance(truncated, np.ndarray)
             assert terminated.shape == truncated.shape
