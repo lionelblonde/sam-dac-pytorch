@@ -111,6 +111,7 @@ class Agent(object):
 
         actr_hid_dims = (300, 200) if self.hps.prefer_td3_over_sac else (256, 256)
         crit_hid_dims = (400, 300) if self.hps.prefer_td3_over_sac else (256, 256)
+        disc_hid_dims = (400, 300) if self.hps.prefer_td3_over_sac else (256, 256)
 
         actr_net_args = [self.ob_shape, self.ac_shape, actr_hid_dims, self.rms_obs, self.max_ac]
         actr_net_kwargs = {"layer_norm": self.hps.layer_norm}
@@ -178,13 +179,12 @@ class Agent(object):
         )
         logger.info(f"{t_max = }")
 
-        if self.expert_dataset is not None:
-            # create discriminator and its optimizer
-            disc_net_args = [self.ob_shape, self.ac_shape, self.hps.d_hid_size, self.rms_obs]
-            disc_net_kwargs_keys = ["wrap_absorb", "d_batch_norm", "spectral_norm", "state_only"]
-            disc_net_kwargs = {k: getattr(self.hps, k) for k in disc_net_kwargs_keys}
-            self.disc = Discriminator(*disc_net_args, **disc_net_kwargs).to(self.device)
-            self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps.d_lr)
+        # create discriminator and its optimizer
+        disc_net_args = [self.ob_shape, self.ac_shape, disc_hid_dims, self.rms_obs]
+        disc_net_kwargs_keys = ["wrap_absorb", "d_batch_norm", "spectral_norm", "state_only"]
+        disc_net_kwargs = {k: getattr(self.hps, k) for k in disc_net_kwargs_keys}
+        self.disc = Discriminator(*disc_net_args, **disc_net_kwargs).to(self.device)
+        self.disc_opt = torch.optim.Adam(self.disc.parameters(), lr=self.hps.d_lr)
 
         log_module_info(self.actr)
         log_module_info(self.crit)
