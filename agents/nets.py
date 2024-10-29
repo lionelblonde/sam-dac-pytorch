@@ -224,10 +224,7 @@ class Discriminator(nn.Module):
                 if self.state_only:
                     # normalize next state
                     input_b = self.rms_obs.standardize(input_b).clamp(*STANDARDIZED_OB_CLAMPS)
-        else:
-            input_a = input_a.clamp(*STANDARDIZED_OB_CLAMPS)
-            if self.state_only:
-                input_b = input_b.clamp(*STANDARDIZED_OB_CLAMPS)
+
         x, _ = pack([input_a, input_b], "b *")  # concatenate along last dim
         x = self.fc_stack(x)
         return self.d_head(x)  # no sigmoid here
